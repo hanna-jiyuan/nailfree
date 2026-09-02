@@ -6,3 +6,4 @@ httpx
 trimesh>=4.0
 numpy
 manifold3d
+lxml

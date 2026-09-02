@@ -365,3 +365,16 @@ def whoami(
     return JSONResponse({"email": user["email"], "name": user["name"], "userId": user["userId"]})
 
 
+
+
+@app.get("/api/debug/env")
+async def debug_env():
+    import sys
+    result = {"python": sys.version}
+    for mod in ("trimesh", "numpy", "manifold3d", "lxml"):
+        try:
+            m = __import__(mod)
+            result[mod] = getattr(m, "__version__", "installed")
+        except ImportError as e:
+            result[mod] = f"MISSING: {e}"
+    return result
