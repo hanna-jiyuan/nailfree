@@ -3,3 +3,6 @@ uvicorn[standard]
 jinja2
 python-multipart
 httpx
+trimesh>=4.0
+numpy
+manifold3d

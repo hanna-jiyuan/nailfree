@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Optional
 
 import httpx
+import trimesh
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 
@@ -273,6 +276,80 @@ async def check_3d_status(
     except Exception as e:
         import traceback
         return JSONResponse({"error": str(e), "trace": traceback.format_exc()}, status_code=500)
+
+
+@app.post("/api/convert-format")
+async def convert_format(
+    request: Request,
+    decrypted_userinfo: Optional[str] = Header(None, alias="Decrypted-Userinfo"),
+):
+    """将 GLB 模型转换为 STL 或 3MF 格式用于 3D 打印"""
+    user = _require_user(decrypted_userinfo)
+
+    body = await request.json()
+    glb_url = body.get("glb_url", "")
+    fmt = body.get("format", "").lower()
+
+    if not glb_url:
+        raise HTTPException(400, "缺少 glb_url 参数")
+    if fmt not in ("stl", "3mf"):
+        raise HTTPException(400, "format 参数必须为 stl 或 3mf")
+
+    # Download GLB file
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(glb_url)
+            if resp.status_code != 200:
+                raise HTTPException(502, f"下载 GLB 文件失败：HTTP {resp.status_code}")
+            glb_bytes = resp.content
+    except httpx.RequestError as e:
+        # Retry with proxy if available
+        proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+        if proxy:
+            try:
+                async with httpx.AsyncClient(timeout=60.0, proxy=proxy) as client:
+                    resp = await client.get(glb_url)
+                    if resp.status_code != 200:
+                        raise HTTPException(502, f"下载 GLB 文件失败(代理)：HTTP {resp.status_code}")
+                    glb_bytes = resp.content
+            except httpx.RequestError as e2:
+                raise HTTPException(502, f"下载 GLB 文件失败：{e2}")
+        else:
+            raise HTTPException(502, f"下载 GLB 文件失败：{e}")
+
+    # Convert using trimesh
+    try:
+        mesh = trimesh.load(io.BytesIO(glb_bytes), file_type="glb")
+    except Exception as e:
+        raise HTTPException(500, f"加载 GLB 模型失败：{e}")
+
+    # If it's a Scene, merge all meshes
+    if isinstance(mesh, trimesh.Scene):
+        geometries = list(mesh.geometry.values())
+        if not geometries:
+            raise HTTPException(500, "GLB 模型中没有找到几何体")
+        mesh = trimesh.util.concatenate(geometries)
+
+    # Export to requested format
+    try:
+        output = io.BytesIO()
+        if fmt == "stl":
+            mesh.export(output, file_type="stl")
+            mime = "application/sla"
+            filename = "accessory-3d.stl"
+        else:
+            mesh.export(output, file_type="3mf")
+            mime = "model/3mf-binary"
+            filename = "accessory-3d.3mf"
+        output.seek(0)
+    except Exception as e:
+        raise HTTPException(500, f"转换格式失败：{e}")
+
+    return StreamingResponse(
+        output,
+        media_type=mime,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/health")

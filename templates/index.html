@@ -575,6 +575,10 @@
         .btn-3d-download:hover {
             box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
         }
+        .btn-3d-download.downloading {
+            opacity: 0.7;
+            cursor: wait;
+        }
 
         .error-3d {
             background: #fef2f2;
@@ -758,6 +762,14 @@
                         <span>💾</span>
                         <span>下载 GLB 模型</span>
                     </a>
+                    <button class="btn-3d-download" id="downloadStlBtn">
+                        <span>🖨️</span>
+                        <span>下载 STL</span>
+                    </button>
+                    <button class="btn-3d-download" id="download3mfBtn">
+                        <span>🖨️</span>
+                        <span>下载 3MF</span>
+                    </button>
                     <button class="redraw-btn" id="newCropBtn">🔄 框选其他配饰</button>
                 </div>
             </div>
@@ -953,7 +965,10 @@
         const result3dPreview = document.getElementById('result3dPreview');
         const modelViewer = document.getElementById('modelViewer');
         const downloadGlbBtn = document.getElementById('downloadGlbBtn');
+        const downloadStlBtn = document.getElementById('downloadStlBtn');
+        const download3mfBtn = document.getElementById('download3mfBtn');
         const newCropBtn = document.getElementById('newCropBtn');
+        let currentGlbUrl = null;
 
         let cropStartX = 0, cropStartY = 0;
         let isCropping = false;
@@ -1307,8 +1322,58 @@
             if (data.glb_url) {
                 modelViewer.src = data.glb_url;
                 downloadGlbBtn.href = data.glb_url;
+                currentGlbUrl = data.glb_url;
             }
         }
+
+        // --- Format conversion download (STL / 3MF) ---
+        async function downloadConverted(glbUrl, format, btn) {
+            if (!glbUrl) {
+                alert('GLB 模型地址不可用，请重新生成');
+                return;
+            }
+            const originalText = btn.innerHTML;
+            btn.classList.add('downloading');
+            btn.disabled = true;
+            btn.innerHTML = `<span>⏳</span><span>转换中...</span>`;
+
+            try {
+                const resp = await fetch('/api/convert-format', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ glb_url: glbUrl, format: format }),
+                });
+
+                if (!resp.ok) {
+                    const errData = await resp.json().catch(() => ({}));
+                    throw new Error(errData.detail || `HTTP ${resp.status}`);
+                }
+
+                const blob = await resp.blob();
+                const ext = format === '3mf' ? '3mf' : 'stl';
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `accessory-3d.${ext}`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                alert(`转换失败：${err.message}`);
+            } finally {
+                btn.classList.remove('downloading');
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
+        downloadStlBtn.addEventListener('click', () => {
+            downloadConverted(currentGlbUrl, 'stl', downloadStlBtn);
+        });
+        download3mfBtn.addEventListener('click', () => {
+            downloadConverted(currentGlbUrl, '3mf', download3mfBtn);
+        });
 
         // New crop button
         newCropBtn.addEventListener('click', () => {

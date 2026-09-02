@@ -1,0 +1,26 @@
+{
+  "schema": "cowork-project/v1",
+  "id": "cw_proj_juszldwlpv",
+  "name": "nailfree",
+  "srcDir": "/home/node/.openclaw/workspace/cowork/nailfree",
+  "createdAt": 1788277040493,
+  "updatedAt": 1788371665842,
+  "createdBy": "cowork-cli",
+  "stack": "fastapi-only",
+  "guardCompliant": true,
+  "cowork": {
+    "workId": 235283,
+    "workDeployType": "APP_DEPLOY",
+    "appId": "a9cb5384",
+    "alias": "nailfree",
+    "accessUrl": "https://cowork.xiaohongshu.com/s/nailfree/",
+    "coworkAppUrl": "https://cowork.xiaohongshu.com/app/NWEzYzNmOTNl",
+    "rawAccessUrl": "https://cowork.xiaohongshu.com/s/a9cb5384/",
+    "deploymentId": 24604,
+    "deploymentStatus": "RUNNING",
+    "publishedAt": 1788371665842,
+    "visibility": "DEPARTMENTS",
+    "version": "23.0.1",
+    "lastZipHash": "sha256:11e940435f2d66f5fbb5997702b57935e8a359fce3882b32b6774d19eb04b0a7"
+  }
+}
