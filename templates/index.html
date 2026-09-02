@@ -1338,10 +1338,27 @@
             btn.innerHTML = `<span>⏳</span><span>转换中...</span>`;
 
             try {
+                // 前端先下载 GLB（因为 Cowork Pod 访问不了腾讯 CDN）
+                btn.innerHTML = `<span>⏳</span><span>下载模型中...</span>`;
+                const glbResp = await fetch(glbUrl);
+                if (!glbResp.ok) {
+                    throw new Error(`下载 GLB 失败: HTTP ${glbResp.status}`);
+                }
+                const glbBlob = await glbResp.blob();
+
+                // 转 base64
+                const glbBase64 = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(glbBlob);
+                });
+
+                btn.innerHTML = `<span>⏳</span><span>转换 ${format.toUpperCase()} 中...</span>`;
                 const resp = await fetch('/api/convert-format', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ glb_url: glbUrl, format: format }),
+                    body: JSON.stringify({ glb_base64: glbBase64, format: format }),
                 });
 
                 if (!resp.ok) {

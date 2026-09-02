@@ -287,35 +287,34 @@ async def convert_format(
     user = _require_user(decrypted_userinfo)
 
     body = await request.json()
-    glb_url = body.get("glb_url", "")
     fmt = body.get("format", "").lower()
+    glb_base64 = body.get("glb_base64", "")
+    glb_url = body.get("glb_url", "")
 
-    if not glb_url:
-        raise HTTPException(400, "缺少 glb_url 参数")
     if fmt not in ("stl", "3mf"):
         raise HTTPException(400, "format 参数必须为 stl 或 3mf")
 
-    # Download GLB file
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(glb_url)
-            if resp.status_code != 200:
-                raise HTTPException(502, f"下载 GLB 文件失败：HTTP {resp.status_code}")
-            glb_bytes = resp.content
-    except httpx.RequestError as e:
-        # Retry with proxy if available
-        proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
-        if proxy:
-            try:
-                async with httpx.AsyncClient(timeout=60.0, proxy=proxy) as client:
-                    resp = await client.get(glb_url)
-                    if resp.status_code != 200:
-                        raise HTTPException(502, f"下载 GLB 文件失败(代理)：HTTP {resp.status_code}")
-                    glb_bytes = resp.content
-            except httpx.RequestError as e2:
-                raise HTTPException(502, f"下载 GLB 文件失败：{e2}")
-        else:
-            raise HTTPException(502, f"下载 GLB 文件失败：{e}")
+    glb_bytes: bytes
+    if glb_base64:
+        # 浏览器先下 GLB，再 base64 传给后端（因为 Cowork Pod 访问不了腾讯 CDN）
+        try:
+            if "," in glb_base64:
+                glb_base64 = glb_base64.split(",", 1)[1]
+            glb_bytes = base64.b64decode(glb_base64)
+        except Exception as e:
+            raise HTTPException(400, f"glb_base64 解码失败：{e}")
+    elif glb_url:
+        # 兜底：后端直接下载（多数情况会失败，仅内网 URL 可用）
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.get(glb_url)
+                if resp.status_code != 200:
+                    raise HTTPException(502, f"下载 GLB 文件失败：HTTP {resp.status_code}")
+                glb_bytes = resp.content
+        except httpx.RequestError as e:
+            raise HTTPException(502, f"后端下载 GLB 失败（Cowork Pod 无法访问外网 CDN），请前端先下载后 base64 传入：{e}")
+    else:
+        raise HTTPException(400, "必须提供 glb_base64 或 glb_url")
 
     # Convert using trimesh
     try:
@@ -377,4 +376,26 @@ async def debug_env():
             result[mod] = getattr(m, "__version__", "installed")
         except ImportError as e:
             result[mod] = f"MISSING: {e}"
+    return result
+
+
+@app.get("/api/debug/fetch")
+async def debug_fetch(url: str):
+    """测试从 Cowork Pod 能不能下载腾讯 CDN 的 GLB。"""
+    import os
+    result = {"url": url, "https_proxy": os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")}
+    # 直连
+    try:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as c:
+            r = await c.get(url)
+            result["direct"] = {"status": r.status_code, "content_length": len(r.content), "content_type": r.headers.get("content-type")}
+    except Exception as e:
+        result["direct"] = f"ERR: {type(e).__name__}: {e}"
+    # 走 env 代理
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            r = await c.get(url)
+            result["env_proxy"] = {"status": r.status_code, "content_length": len(r.content), "content_type": r.headers.get("content-type")}
+    except Exception as e:
+        result["env_proxy"] = f"ERR: {type(e).__name__}: {e}"
     return result
