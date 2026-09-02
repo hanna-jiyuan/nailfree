@@ -1339,12 +1339,28 @@
 
             try {
                 // 前端先下载 GLB（因为 Cowork Pod 访问不了腾讯 CDN）
-                btn.innerHTML = `<span>⏳</span><span>下载模型中...</span>`;
-                const glbResp = await fetch(glbUrl);
-                if (!glbResp.ok) {
-                    throw new Error(`下载 GLB 失败: HTTP ${glbResp.status}`);
+                // 优先用 model-viewer 已加载的 GLB（避开 CORS），失败后 fallback 到直接 fetch
+                btn.innerHTML = `<span>⏳</span><span>提取模型中...</span>`;
+                let glbBlob = null;
+
+                // 尝试 1: 从已加载的 model-viewer 导出
+                if (modelViewer && typeof modelViewer.exportScene === 'function') {
+                    try {
+                        glbBlob = await modelViewer.exportScene({binary: true});
+                    } catch (e) {
+                        console.warn('exportScene 失败，尝试直接下载:', e);
+                    }
                 }
-                const glbBlob = await glbResp.blob();
+
+                // 尝试 2: fallback 到 fetch（可能被 CORS 拦）
+                if (!glbBlob) {
+                    btn.innerHTML = `<span>⏳</span><span>下载模型中...</span>`;
+                    const glbResp = await fetch(glbUrl);
+                    if (!glbResp.ok) {
+                        throw new Error(`下载 GLB 失败: HTTP ${glbResp.status}`);
+                    }
+                    glbBlob = await glbResp.blob();
+                }
 
                 // 转 base64
                 const glbBase64 = await new Promise((resolve, reject) => {

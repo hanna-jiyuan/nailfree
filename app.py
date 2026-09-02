@@ -399,3 +399,27 @@ async def debug_fetch(url: str):
     except Exception as e:
         result["env_proxy"] = f"ERR: {type(e).__name__}: {e}"
     return result
+
+
+@app.get("/api/debug/net-probe")
+async def net_probe(url: str):
+    import os
+    result = {"env_proxies": {k: v for k, v in os.environ.items() if "proxy" in k.lower()}}
+    proxies_to_try = [
+        None,
+        "http://127.0.0.1:3128",
+        "http://sock-proxy.devops.xiaohongshu.com:3128",
+        "http://proxy.devops.xiaohongshu.com:3128",
+    ]
+    for p in proxies_to_try:
+        key = str(p)
+        try:
+            kwargs = {"timeout": 15.0, "trust_env": False}
+            if p:
+                kwargs["proxy"] = p
+            async with httpx.AsyncClient(**kwargs) as c:
+                r = await c.get(url)
+                result[key] = {"status": r.status_code, "size": len(r.content)}
+        except Exception as e:
+            result[key] = f"ERR {type(e).__name__}: {str(e)[:100]}"
+    return result

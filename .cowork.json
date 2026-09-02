@@ -4,7 +4,7 @@
   "name": "nailfree",
   "srcDir": "/home/node/.openclaw/workspace/cowork/nailfree",
   "createdAt": 1788277040493,
-  "updatedAt": 1788374438036,
+  "updatedAt": 1788375639136,
   "createdBy": "cowork-cli",
   "stack": "fastapi-only",
   "guardCompliant": true,
@@ -18,9 +18,9 @@
     "rawAccessUrl": "https://cowork.xiaohongshu.com/s/a9cb5384/",
     "deploymentId": 24604,
     "deploymentStatus": "RUNNING",
-    "publishedAt": 1788374438036,
+    "publishedAt": 1788375639136,
     "visibility": "DEPARTMENTS",
-    "version": "23.0.6",
-    "lastZipHash": "sha256:b8f35dc7591d4cb1f4f0b58a303d78d8885a91a77f3032a9a92c43053faf5a86"
+    "version": "23.0.8",
+    "lastZipHash": "sha256:041ef1fd66435dfbf3474a7eef759bf30b204c1f4a261bd0b7a685737f6e8b36"
   }
 }
