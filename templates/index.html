@@ -1,0 +1,1326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NailFree - AI 美甲试穿</title>
+    <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+            background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 25%, #f3e8ff 50%, #e0e7ff 75%, #dbeafe 100%);
+            min-height: 100vh;
+            color: #1f2937;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            padding: 48px 20px 32px;
+        }
+        .header .logo {
+            font-size: 48px;
+            margin-bottom: 8px;
+        }
+        .header h1 {
+            font-size: 32px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #ec4899, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.5px;
+        }
+        .header .subtitle {
+            color: #6b7280;
+            font-size: 15px;
+            margin-top: 8px;
+        }
+        .user-badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.7);
+            backdrop-filter: blur(8px);
+            border-radius: 20px;
+            padding: 4px 14px;
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 12px;
+        }
+
+        /* Container */
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 0 20px 60px;
+        }
+
+        /* Card */
+        .card {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            padding: 36px;
+            margin-bottom: 28px;
+        }
+
+        /* Upload Area */
+        .upload-area {
+            border: 2px dashed #d1d5db;
+            border-radius: 16px;
+            padding: 48px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .upload-area:hover, .upload-area.dragover {
+            border-color: #a855f7;
+            background: rgba(168, 85, 247, 0.04);
+        }
+        .upload-area.has-image {
+            padding: 20px;
+            border-style: solid;
+            border-color: #e5e7eb;
+        }
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+        }
+        .upload-text {
+            color: #4b5563;
+            font-size: 15px;
+            line-height: 1.6;
+        }
+        .upload-text strong {
+            color: #a855f7;
+        }
+        .upload-hint {
+            color: #9ca3af;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+        .preview-container {
+            position: relative;
+            display: inline-block;
+        }
+        .preview-image {
+            max-height: 280px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .remove-btn {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            width: 28px;
+            height: 28px;
+            background: #ef4444;
+            color: white;
+            border: 2px solid white;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s;
+        }
+        .remove-btn:hover { transform: scale(1.1); }
+
+        /* Input */
+        .style-input-wrapper {
+            margin-top: 4px;
+        }
+        .style-input-wrapper label {
+            display: block;
+            font-weight: 600;
+            font-size: 15px;
+            margin-bottom: 10px;
+            color: #374151;
+        }
+        .style-input-wrapper label .emoji { margin-right: 6px; }
+        .style-input {
+            width: 100%;
+            padding: 14px 18px;
+            border: 1.5px solid #e5e7eb;
+            border-radius: 12px;
+            font-size: 15px;
+            outline: none;
+            transition: all 0.2s;
+            font-family: inherit;
+            resize: none;
+            background: rgba(255,255,255,0.6);
+        }
+        .style-input:focus {
+            border-color: #a855f7;
+            box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.1);
+        }
+
+        /* Style presets */
+        .style-presets {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .preset-tag {
+            padding: 6px 14px;
+            background: rgba(168, 85, 247, 0.08);
+            border: 1px solid rgba(168, 85, 247, 0.2);
+            border-radius: 20px;
+            font-size: 13px;
+            color: #7c3aed;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+        }
+        .preset-tag:hover {
+            background: rgba(168, 85, 247, 0.15);
+            border-color: rgba(168, 85, 247, 0.4);
+        }
+
+        /* Generate button */
+        .generate-btn {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 14px;
+            font-size: 17px;
+            font-weight: 600;
+            color: white;
+            background: linear-gradient(135deg, #ec4899, #8b5cf6);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .generate-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 24px rgba(168, 85, 247, 0.35);
+        }
+        .generate-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Loading */
+        .loading-container {
+            text-align: center;
+            padding: 48px 20px;
+        }
+        .spinner {
+            width: 56px;
+            height: 56px;
+            border: 4px solid #f3e8ff;
+            border-top-color: #8b5cf6;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text {
+            color: #6b7280;
+            font-size: 15px;
+        }
+        .loading-subtext {
+            color: #9ca3af;
+            font-size: 13px;
+            margin-top: 8px;
+        }
+
+        /* Result */
+        .result-section {
+            display: none;
+        }
+        .result-section.visible { display: block; }
+        .result-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            text-align: center;
+            color: #374151;
+        }
+        .result-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+        .result-item {
+            text-align: center;
+        }
+        .result-label {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #9ca3af;
+            margin-bottom: 12px;
+        }
+        .result-image-wrapper {
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+            background: #f9fafb;
+            aspect-ratio: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .result-image {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        /* Error */
+        .error-msg {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 12px;
+            padding: 14px 18px;
+            color: #991b1b;
+            font-size: 14px;
+            margin-top: 16px;
+            display: none;
+        }
+        .error-msg.visible { display: block; }
+
+        /* Actions row */
+        .result-actions {
+            text-align: center;
+            margin-top: 20px;
+        }
+        .retry-btn {
+            padding: 10px 28px;
+            border: 1.5px solid #d1d5db;
+            border-radius: 10px;
+            background: white;
+            color: #374151;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .retry-btn:hover {
+            border-color: #a855f7;
+            color: #7c3aed;
+        }
+        .download-btn {
+            padding: 10px 28px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #ec4899, #8b5cf6);
+            color: white;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-block;
+            margin-left: 12px;
+        }
+        .download-btn:hover {
+            box-shadow: 0 4px 12px rgba(168, 85, 247, 0.3);
+        }
+
+        /* ====== 3D Section Styles ====== */
+        .section-3d {
+            display: none;
+        }
+        .section-3d.visible { display: block; }
+
+        .section-3d-title {
+            font-size: 20px;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #8b5cf6, #6366f1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .section-3d-desc {
+            text-align: center;
+            color: #6b7280;
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+
+        /* Crop area */
+        .crop-workspace {
+            display: none;
+            margin-bottom: 24px;
+        }
+        .crop-workspace.visible { display: block; }
+        .crop-hint {
+            text-align: center;
+            color: #6b7280;
+            font-size: 13px;
+            margin-bottom: 12px;
+            line-height: 1.6;
+        }
+        .crop-container {
+            position: relative;
+            display: inline-block;
+            margin: 0 auto;
+            cursor: crosshair;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+        }
+        .crop-container img {
+            display: block;
+            max-width: 100%;
+            max-height: 400px;
+        }
+        .crop-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+        }
+        .crop-rect {
+            position: absolute;
+            border: 2px solid #8b5cf6;
+            background: rgba(139, 92, 246, 0.15);
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+            pointer-events: none;
+            display: none;
+        }
+
+        .crop-preview-area {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+        }
+        .crop-preview-box {
+            text-align: center;
+        }
+        .crop-preview-box .label {
+            font-size: 12px;
+            color: #9ca3af;
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+        .crop-preview-img {
+            width: 100px;
+            height: 100px;
+            object-fit: contain;
+            border-radius: 10px;
+            border: 1.5px solid #e5e7eb;
+            background: #f9fafb;
+        }
+
+        .crop-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 16px;
+        }
+
+        /* 3D Generate Button */
+        .generate-3d-btn {
+            padding: 12px 32px;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            color: white;
+            background: linear-gradient(135deg, #8b5cf6, #6366f1);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .generate-3d-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.35);
+        }
+        .generate-3d-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .redraw-btn {
+            padding: 10px 24px;
+            border: 1.5px solid #d1d5db;
+            border-radius: 10px;
+            background: white;
+            color: #374151;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .redraw-btn:hover {
+            border-color: #8b5cf6;
+            color: #6d28d9;
+        }
+
+        /* 3D Loading */
+        .loading-3d {
+            display: none;
+            text-align: center;
+            padding: 40px 20px;
+        }
+        .loading-3d.visible { display: block; }
+        .spinner-3d {
+            width: 48px;
+            height: 48px;
+            border: 4px solid #ede9fe;
+            border-top-color: #6366f1;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 16px;
+        }
+        .loading-3d-text {
+            color: #4b5563;
+            font-size: 15px;
+            font-weight: 500;
+        }
+        .loading-3d-status {
+            color: #9ca3af;
+            font-size: 13px;
+            margin-top: 8px;
+        }
+        .loading-3d-timer {
+            color: #6366f1;
+            font-size: 24px;
+            font-weight: 700;
+            margin-top: 12px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* 3D Result */
+        .result-3d {
+            display: none;
+        }
+        .result-3d.visible { display: block; }
+
+        .result-3d-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+        .result-3d-item {
+            text-align: center;
+        }
+        .result-3d-label {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #9ca3af;
+            margin-bottom: 12px;
+        }
+        .result-3d-preview {
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+            background: #f9fafb;
+        }
+        .result-3d-preview img {
+            width: 100%;
+            display: block;
+        }
+
+        /* model-viewer */
+        .model-viewer-wrapper {
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+            background: linear-gradient(135deg, #f8fafc, #f1f5f9);
+            aspect-ratio: 1;
+        }
+        model-viewer {
+            width: 100%;
+            height: 100%;
+            --poster-color: transparent;
+        }
+
+        .result-3d-actions {
+            text-align: center;
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .btn-3d-download {
+            padding: 10px 28px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #8b5cf6, #6366f1);
+            color: white;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-3d-download:hover {
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+
+        .error-3d {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 12px;
+            padding: 14px 18px;
+            color: #991b1b;
+            font-size: 14px;
+            margin-top: 16px;
+            display: none;
+            text-align: center;
+        }
+        .error-3d.visible { display: block; }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            .header h1 { font-size: 24px; }
+            .card { padding: 24px 18px; }
+            .result-grid { grid-template-columns: 1fr; }
+            .result-3d-grid { grid-template-columns: 1fr; }
+            .crop-container img { max-height: 280px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">💅</div>
+        <h1>NailFree - AI 美甲试穿</h1>
+        <p class="subtitle">上传手部照片，描述你想要的美甲风格，AI 为你生成效果图</p>
+        {% if user %}
+        <div class="user-badge">👤 {{ user.name or user.email }}</div>
+        {% endif %}
+    </div>
+
+    <div class="container">
+        <!-- Upload + Input Card -->
+        <div class="card">
+            <!-- Upload Area -->
+            <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp" style="display:none">
+            <div class="upload-area" id="uploadArea">
+                <div id="uploadPlaceholder">
+                    <div class="upload-icon">📸</div>
+                    <div class="upload-text">
+                        <strong>点击上传</strong> 或拖拽手部照片到这里
+                    </div>
+                    <div class="upload-hint">支持 JPEG / PNG / WebP，最大 5MB</div>
+                </div>
+                <div id="previewWrapper" class="preview-container" style="display:none">
+                    <img id="previewImage" class="preview-image" src="" alt="preview">
+                    <button class="remove-btn" id="removeBtn" title="移除图片">✕</button>
+                </div>
+            </div>
+
+            <!-- Style Input -->
+            <div class="style-input-wrapper" style="margin-top: 24px;">
+                <label><span class="emoji">✨</span>美甲风格描述</label>
+                <textarea class="style-input" id="styleInput" rows="3" placeholder="描述你想要的美甲风格，如：法式猫眼美甲、冰透仙女风、复古油画风、极简法式白边..."></textarea>
+                <div class="style-presets">
+                    <span class="preset-tag" data-style="法式白色猫眼美甲，优雅知性，光泽细腻">法式猫眼 ✨</span>
+                    <span class="preset-tag" data-style="冰透粉色仙女风美甲，透明感强，镶嵌小珍珠和水钻">冰透仙女风 🧚</span>
+                    <span class="preset-tag" data-style="莫兰迪色系渐变美甲，高级灰调，哑光质感">莫兰迪渐变 🎨</span>
+                    <span class="preset-tag" data-style="复古酒红色美甲，法式方头，配金色细线装饰">复古法式 🍷</span>
+                    <span class="preset-tag" data-style="樱花粉色手绘花卉美甲，春天感，立体小花点缀">樱花花卉 🌸</span>
+                    <span class="preset-tag" data-style="极简纯色短甲，裸色系，干净利落，职场通勤风">极简通勤 💼</span>
+                </div>
+            </div>
+
+            <!-- Error -->
+            <div class="error-msg" id="errorMsg"></div>
+
+            <!-- Generate Button -->
+            <div style="margin-top: 24px;">
+                <button class="generate-btn" id="generateBtn" disabled>
+                    <span>🪄</span>
+                    <span>生成效果图</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <div class="card" id="loadingCard" style="display:none">
+            <div class="loading-container">
+                <div class="spinner"></div>
+                <div class="loading-text">AI 正在为你设计美甲...</div>
+                <div class="loading-subtext">通常需要 15-30 秒，请耐心等待 ✨</div>
+            </div>
+        </div>
+
+        <!-- Result -->
+        <div class="card result-section" id="resultSection">
+            <div class="result-title">🎉 生成完成</div>
+            <div class="result-grid">
+                <div class="result-item">
+                    <div class="result-label">原图</div>
+                    <div class="result-image-wrapper">
+                        <img id="resultOriginal" class="result-image" src="" alt="原图">
+                    </div>
+                </div>
+                <div class="result-item">
+                    <div class="result-label">美甲效果图</div>
+                    <div class="result-image-wrapper">
+                        <img id="resultGenerated" class="result-image" src="" alt="效果图">
+                    </div>
+                </div>
+            </div>
+            <div class="result-actions">
+                <button class="retry-btn" id="retryBtn">🔄 重新生成</button>
+                <a class="download-btn" id="downloadBtn" download="nailfree-result.jpeg">💾 保存效果图</a>
+            </div>
+        </div>
+
+        <!-- ====== 3D Accessory Section ====== -->
+        <div class="card section-3d" id="section3d">
+            <div class="section-3d-title">✨ 3D 配饰生成</div>
+            <div class="section-3d-desc">在效果图中框选立体配饰区域（蝴蝶、花朵、水钻等），AI 将其生成为可旋转的 3D 模型</div>
+
+            <!-- Crop Workspace -->
+            <div class="crop-workspace" id="cropWorkspace">
+                <div class="crop-hint">🖱️ 在效果图上拖拽鼠标框选配饰区域，框选完成后点击生成</div>
+                <div style="text-align:center;">
+                    <div class="crop-container" id="cropContainer">
+                        <img id="cropBaseImage" src="" alt="效果图">
+                        <div class="crop-overlay" id="cropOverlay">
+                            <div class="crop-rect" id="cropRect"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="crop-preview-area" id="cropPreviewArea" style="display:none">
+                    <div class="crop-preview-box">
+                        <div class="label">配饰裁剪预览</div>
+                        <img class="crop-preview-img" id="cropPreviewImg" src="" alt="裁剪预览">
+                    </div>
+                </div>
+                <div class="crop-actions" id="cropActions" style="display:none">
+                    <button class="redraw-btn" id="redrawBtn">🔄 重新框选</button>
+                    <button class="generate-3d-btn" id="generate3dBtn">
+                        <span>🧊</span>
+                        <span>生成 3D 模型</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 3D Loading -->
+            <div class="loading-3d" id="loading3d">
+                <div class="spinner-3d"></div>
+                <div class="loading-3d-text">3D 模型生成中，请耐心等待...</div>
+                <div class="loading-3d-status" id="loading3dStatus">任务已提交，排队中...</div>
+                <div class="loading-3d-timer" id="loading3dTimer">00:00</div>
+            </div>
+
+            <!-- 3D Error -->
+            <div class="error-3d" id="error3d"></div>
+
+            <!-- 3D Result -->
+            <div class="result-3d" id="result3d">
+                <div class="result-3d-grid">
+                    <div class="result-3d-item">
+                        <div class="result-3d-label">预览图</div>
+                        <div class="result-3d-preview">
+                            <img id="result3dPreview" src="" alt="3D 预览图">
+                        </div>
+                    </div>
+                    <div class="result-3d-item">
+                        <div class="result-3d-label">3D 模型（可旋转/缩放）</div>
+                        <div class="model-viewer-wrapper">
+                            <model-viewer
+                                id="modelViewer"
+                                camera-controls
+                                touch-action="pan-y"
+                                auto-rotate
+                                shadow-intensity="1"
+                                environment-image="neutral"
+                                exposure="1"
+                                alt="3D 配饰模型">
+                            </model-viewer>
+                        </div>
+                    </div>
+                </div>
+                <div class="result-3d-actions">
+                    <a class="btn-3d-download" id="downloadGlbBtn" download="accessory-3d.glb">
+                        <span>💾</span>
+                        <span>下载 GLB 模型</span>
+                    </a>
+                    <button class="redraw-btn" id="newCropBtn">🔄 框选其他配饰</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ===== Existing Nail Generation Logic =====
+        const fileInput = document.getElementById('fileInput');
+        const uploadArea = document.getElementById('uploadArea');
+        const uploadPlaceholder = document.getElementById('uploadPlaceholder');
+        const previewWrapper = document.getElementById('previewWrapper');
+        const previewImage = document.getElementById('previewImage');
+        const removeBtn = document.getElementById('removeBtn');
+        const styleInput = document.getElementById('styleInput');
+        const generateBtn = document.getElementById('generateBtn');
+        const loadingCard = document.getElementById('loadingCard');
+        const resultSection = document.getElementById('resultSection');
+        const resultOriginal = document.getElementById('resultOriginal');
+        const resultGenerated = document.getElementById('resultGenerated');
+        const errorMsg = document.getElementById('errorMsg');
+        const retryBtn = document.getElementById('retryBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+
+        let selectedFile = null;
+        let originalPreviewUrl = null;
+        let generatedImageUrl = null;
+
+        // --- Upload Logic ---
+        uploadArea.addEventListener('click', (e) => {
+            if (e.target === removeBtn || removeBtn.contains(e.target)) return;
+            fileInput.click();
+        });
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) handleFile(files[0]);
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) handleFile(fileInput.files[0]);
+        });
+
+        removeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            clearFile();
+        });
+
+        function handleFile(file) {
+            const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+            if (!validTypes.includes(file.type)) {
+                showError('请选择 JPEG、PNG 或 WebP 格式的图片');
+                return;
+            }
+            if (file.size > 5 * 1024 * 1024) {
+                showError('图片大小不能超过 5MB');
+                return;
+            }
+            hideError();
+            selectedFile = file;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                originalPreviewUrl = e.target.result;
+                previewImage.src = originalPreviewUrl;
+                uploadPlaceholder.style.display = 'none';
+                previewWrapper.style.display = 'inline-block';
+                uploadArea.classList.add('has-image');
+                updateButtonState();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function clearFile() {
+            selectedFile = null;
+            originalPreviewUrl = null;
+            fileInput.value = '';
+            previewImage.src = '';
+            uploadPlaceholder.style.display = 'block';
+            previewWrapper.style.display = 'none';
+            uploadArea.classList.remove('has-image');
+            updateButtonState();
+        }
+
+        // --- Style presets ---
+        document.querySelectorAll('.preset-tag').forEach(tag => {
+            tag.addEventListener('click', () => {
+                styleInput.value = tag.dataset.style;
+                updateButtonState();
+            });
+        });
+
+        styleInput.addEventListener('input', updateButtonState);
+
+        function updateButtonState() {
+            generateBtn.disabled = !(selectedFile && styleInput.value.trim().length > 0);
+        }
+
+        // --- Generate ---
+        generateBtn.addEventListener('click', generate);
+        retryBtn.addEventListener('click', () => {
+            resultSection.classList.remove('visible');
+            generate();
+        });
+
+        async function generate() {
+            if (!selectedFile || !styleInput.value.trim()) return;
+
+            hideError();
+            resultSection.classList.remove('visible');
+            loadingCard.style.display = 'block';
+            generateBtn.disabled = true;
+
+            const formData = new FormData();
+            formData.append('image', selectedFile);
+            formData.append('style', styleInput.value.trim());
+
+            try {
+                const resp = await fetch('/api/generate', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!resp.ok) {
+                    let detail = '';
+                    try {
+                        const errData = await resp.json();
+                        detail = errData.detail || resp.statusText;
+                    } catch {
+                        detail = resp.statusText;
+                    }
+                    throw new Error(detail);
+                }
+
+                const data = await resp.json();
+                generatedImageUrl = data.image;
+
+                // Show result
+                resultOriginal.src = originalPreviewUrl;
+                resultGenerated.src = data.image;
+                downloadBtn.href = data.image;
+                loadingCard.style.display = 'none';
+                resultSection.classList.add('visible');
+
+                // Show 3D section and init crop
+                initCropSection(data.image);
+
+                // Scroll to result
+                resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (err) {
+                loadingCard.style.display = 'none';
+                showError('生成失败：' + (err.message || '未知错误') + '。请重试。');
+            } finally {
+                updateButtonState();
+            }
+        }
+
+        function showError(msg) {
+            errorMsg.textContent = msg;
+            errorMsg.classList.add('visible');
+        }
+        function hideError() {
+            errorMsg.classList.remove('visible');
+        }
+
+
+        // ===== 3D Accessory Generation Logic =====
+        const section3d = document.getElementById('section3d');
+        const cropWorkspace = document.getElementById('cropWorkspace');
+        const cropContainer = document.getElementById('cropContainer');
+        const cropBaseImage = document.getElementById('cropBaseImage');
+        const cropOverlay = document.getElementById('cropOverlay');
+        const cropRect = document.getElementById('cropRect');
+        const cropPreviewArea = document.getElementById('cropPreviewArea');
+        const cropPreviewImg = document.getElementById('cropPreviewImg');
+        const cropActions = document.getElementById('cropActions');
+        const redrawBtn = document.getElementById('redrawBtn');
+        const generate3dBtn = document.getElementById('generate3dBtn');
+        const loading3d = document.getElementById('loading3d');
+        const loading3dStatus = document.getElementById('loading3dStatus');
+        const loading3dTimer = document.getElementById('loading3dTimer');
+        const error3d = document.getElementById('error3d');
+        const result3d = document.getElementById('result3d');
+        const result3dPreview = document.getElementById('result3dPreview');
+        const modelViewer = document.getElementById('modelViewer');
+        const downloadGlbBtn = document.getElementById('downloadGlbBtn');
+        const newCropBtn = document.getElementById('newCropBtn');
+
+        let cropStartX = 0, cropStartY = 0;
+        let isCropping = false;
+        let croppedBase64 = null;
+        let pollTimer = null;
+        let timerInterval = null;
+        let timerSeconds = 0;
+
+        function initCropSection(imageUrl) {
+            section3d.classList.add('visible');
+            cropWorkspace.classList.add('visible');
+            cropBaseImage.src = imageUrl;
+            result3d.classList.remove('visible');
+            loading3d.classList.remove('visible');
+            error3d.classList.remove('visible');
+            cropPreviewArea.style.display = 'none';
+            cropActions.style.display = 'none';
+            cropRect.style.display = 'none';
+            croppedBase64 = null;
+
+            // Wait for image to load before enabling crop
+            cropBaseImage.onload = () => {
+                // Ready for cropping
+            };
+        }
+
+        // --- Crop mouse events ---
+        cropOverlay.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const rect = cropOverlay.getBoundingClientRect();
+            cropStartX = e.clientX - rect.left;
+            cropStartY = e.clientY - rect.top;
+            isCropping = true;
+            cropRect.style.display = 'block';
+            cropRect.style.left = cropStartX + 'px';
+            cropRect.style.top = cropStartY + 'px';
+            cropRect.style.width = '0px';
+            cropRect.style.height = '0px';
+            cropPreviewArea.style.display = 'none';
+            cropActions.style.display = 'none';
+            croppedBase64 = null;
+        });
+
+        cropOverlay.addEventListener('mousemove', (e) => {
+            if (!isCropping) return;
+            const rect = cropOverlay.getBoundingClientRect();
+            const curX = e.clientX - rect.left;
+            const curY = e.clientY - rect.top;
+
+            const x = Math.min(cropStartX, curX);
+            const y = Math.min(cropStartY, curY);
+            const w = Math.abs(curX - cropStartX);
+            const h = Math.abs(curY - cropStartY);
+
+            cropRect.style.left = x + 'px';
+            cropRect.style.top = y + 'px';
+            cropRect.style.width = w + 'px';
+            cropRect.style.height = h + 'px';
+        });
+
+        document.addEventListener('mouseup', (e) => {
+            if (!isCropping) return;
+            isCropping = false;
+
+            const rect = cropOverlay.getBoundingClientRect();
+            const curX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+            const curY = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
+
+            const x = Math.min(cropStartX, curX);
+            const y = Math.min(cropStartY, curY);
+            const w = Math.abs(curX - cropStartX);
+            const h = Math.abs(curY - cropStartY);
+
+            if (w < 10 || h < 10) {
+                cropRect.style.display = 'none';
+                return;
+            }
+
+            // Convert to natural image coordinates
+            const naturalW = cropBaseImage.naturalWidth;
+            const naturalH = cropBaseImage.naturalHeight;
+            const displayW = cropBaseImage.clientWidth;
+            const displayH = cropBaseImage.clientHeight;
+
+            const scaleX = naturalW / displayW;
+            const scaleY = naturalH / displayH;
+
+            const sx = Math.round(x * scaleX);
+            const sy = Math.round(y * scaleY);
+            const sw = Math.round(w * scaleX);
+            const sh = Math.round(h * scaleY);
+
+            // Crop using canvas（最小 256px，API 要求 >= 128）
+            const minDim = 256;
+            const outW = Math.max(sw, minDim);
+            const outH = Math.max(sh, minDim);
+            const canvas = document.createElement('canvas');
+            canvas.width = outW;
+            canvas.height = outH;
+            const ctx = canvas.getContext('2d');
+
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+                ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
+                const dataUrl = canvas.toDataURL('image/png');
+                croppedBase64 = dataUrl;
+                cropPreviewImg.src = dataUrl;
+                cropPreviewArea.style.display = 'flex';
+                cropActions.style.display = 'flex';
+                generate3dBtn.disabled = false;
+            };
+            img.src = cropBaseImage.src;
+        });
+
+        // Touch support for mobile
+        cropOverlay.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = cropOverlay.getBoundingClientRect();
+            cropStartX = touch.clientX - rect.left;
+            cropStartY = touch.clientY - rect.top;
+            isCropping = true;
+            cropRect.style.display = 'block';
+            cropRect.style.left = cropStartX + 'px';
+            cropRect.style.top = cropStartY + 'px';
+            cropRect.style.width = '0px';
+            cropRect.style.height = '0px';
+            cropPreviewArea.style.display = 'none';
+            cropActions.style.display = 'none';
+            croppedBase64 = null;
+        }, { passive: false });
+
+        cropOverlay.addEventListener('touchmove', (e) => {
+            if (!isCropping) return;
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = cropOverlay.getBoundingClientRect();
+            const curX = touch.clientX - rect.left;
+            const curY = touch.clientY - rect.top;
+
+            const x = Math.min(cropStartX, curX);
+            const y = Math.min(cropStartY, curY);
+            const w = Math.abs(curX - cropStartX);
+            const h = Math.abs(curY - cropStartY);
+
+            cropRect.style.left = x + 'px';
+            cropRect.style.top = y + 'px';
+            cropRect.style.width = w + 'px';
+            cropRect.style.height = h + 'px';
+        }, { passive: false });
+
+        cropOverlay.addEventListener('touchend', (e) => {
+            if (!isCropping) return;
+            isCropping = false;
+
+            const touch = e.changedTouches[0];
+            const rect = cropOverlay.getBoundingClientRect();
+            const curX = Math.max(0, Math.min(touch.clientX - rect.left, rect.width));
+            const curY = Math.max(0, Math.min(touch.clientY - rect.top, rect.height));
+
+            const x = Math.min(cropStartX, curX);
+            const y = Math.min(cropStartY, curY);
+            const w = Math.abs(curX - cropStartX);
+            const h = Math.abs(curY - cropStartY);
+
+            if (w < 10 || h < 10) {
+                cropRect.style.display = 'none';
+                return;
+            }
+
+            const naturalW = cropBaseImage.naturalWidth;
+            const naturalH = cropBaseImage.naturalHeight;
+            const displayW = cropBaseImage.clientWidth;
+            const displayH = cropBaseImage.clientHeight;
+
+            const scaleX = naturalW / displayW;
+            const scaleY = naturalH / displayH;
+
+            const sx = Math.round(x * scaleX);
+            const sy = Math.round(y * scaleY);
+            const sw = Math.round(w * scaleX);
+            const sh = Math.round(h * scaleY);
+
+            const minDim2 = 256;
+            const outW2 = Math.max(sw, minDim2);
+            const outH2 = Math.max(sh, minDim2);
+            const canvas = document.createElement('canvas');
+            canvas.width = outW2;
+            canvas.height = outH2;
+            const ctx = canvas.getContext('2d');
+
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+                ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW2, outH2);
+                const dataUrl = canvas.toDataURL('image/png');
+                croppedBase64 = dataUrl;
+                cropPreviewImg.src = dataUrl;
+                cropPreviewArea.style.display = 'flex';
+                cropActions.style.display = 'flex';
+                generate3dBtn.disabled = false;
+            };
+            img.src = cropBaseImage.src;
+        });
+
+        // Redraw
+        redrawBtn.addEventListener('click', () => {
+            cropRect.style.display = 'none';
+            cropPreviewArea.style.display = 'none';
+            cropActions.style.display = 'none';
+            croppedBase64 = null;
+        });
+
+        // Generate 3D
+        generate3dBtn.addEventListener('click', async () => {
+            if (!croppedBase64) return;
+
+            generate3dBtn.disabled = true;
+            cropWorkspace.classList.remove('visible');
+            loading3d.classList.add('visible');
+            error3d.classList.remove('visible');
+            result3d.classList.remove('visible');
+
+            // Start timer
+            timerSeconds = 0;
+            updateTimerDisplay();
+            timerInterval = setInterval(() => {
+                timerSeconds++;
+                updateTimerDisplay();
+            }, 1000);
+
+            loading3dStatus.textContent = '正在提交任务...';
+
+            try {
+                const resp = await fetch('/api/generate-3d', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: croppedBase64 }),
+                });
+
+                if (!resp.ok) {
+                    const errData = await resp.json().catch(() => ({}));
+                    throw new Error(errData.detail || resp.statusText);
+                }
+
+                const data = await resp.json();
+                const taskId = data.task_id;
+
+                // Start polling
+                loading3dStatus.textContent = '任务排队中 (queued)...';
+                startPolling(taskId);
+            } catch (err) {
+                stopTimer();
+                loading3d.classList.remove('visible');
+                error3d.textContent = '❌ 提交失败：' + (err.message || '未知错误');
+                error3d.classList.add('visible');
+                cropWorkspace.classList.add('visible');
+                generate3dBtn.disabled = false;
+            }
+        });
+
+        function updateTimerDisplay() {
+            const mins = Math.floor(timerSeconds / 60).toString().padStart(2, '0');
+            const secs = (timerSeconds % 60).toString().padStart(2, '0');
+            loading3dTimer.textContent = `${mins}:${secs}`;
+        }
+
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            if (pollTimer) {
+                clearTimeout(pollTimer);
+                pollTimer = null;
+            }
+        }
+
+        function startPolling(taskId) {
+            let retryCount = 0;
+            const maxRetries = 5;
+            const doPoll = async () => {
+                try {
+                    const resp = await fetch(`/api/check-3d?task_id=${encodeURIComponent(taskId)}`, {credentials: 'same-origin'});
+
+                    if (!resp.ok) {
+                        const errData = await resp.json().catch(() => ({}));
+                        throw new Error(errData.detail || resp.statusText);
+                    }
+
+                    retryCount = 0; // 成功后重置重试计数
+                    const data = await resp.json();
+                    const status = data.status;
+
+                    if (status === 'completed') {
+                        stopTimer();
+                        loading3d.classList.remove('visible');
+                        show3dResult(data);
+                        return;
+                    }
+
+                    if (status === 'failed') {
+                        stopTimer();
+                        loading3d.classList.remove('visible');
+                        const errMsg = (data.error && typeof data.error === 'object') ? data.error.message : (data.error || '未知错误');
+                        error3d.textContent = '❌ 3D 生成失败：' + errMsg;
+                        error3d.classList.add('visible');
+                        cropWorkspace.classList.add('visible');
+                        generate3dBtn.disabled = false;
+                        return;
+                    }
+
+                    const statusMap = {
+                        'queued': '任务排队中...',
+                        'in_progress': '模型生成中...',
+                        'processing': '模型生成中...',
+                    };
+                    loading3dStatus.textContent = statusMap[status] || `状态：${status}`;
+                    pollTimer = setTimeout(doPoll, 10000);
+                } catch (err) {
+                    retryCount++;
+                    if (retryCount <= maxRetries) {
+                        loading3dStatus.textContent = `网络波动，重试中 (${retryCount}/${maxRetries})...`;
+                        pollTimer = setTimeout(doPoll, 5000);
+                    } else {
+                        stopTimer();
+                        loading3d.classList.remove('visible');
+                        error3d.textContent = '❌ 查询状态失败：' + (err.message || '网络错误') + '。请刷新页面重试。';
+                        error3d.classList.add('visible');
+                        cropWorkspace.classList.add('visible');
+                        generate3dBtn.disabled = false;
+                    }
+                }
+            };
+
+            pollTimer = setTimeout(doPoll, 10000);
+        }
+
+        function show3dResult(data) {
+            result3d.classList.add('visible');
+
+            // Preview image
+            if (data.preview_url) {
+                result3dPreview.src = data.preview_url;
+            } else {
+                result3dPreview.src = '';
+            }
+
+            // 3D model
+            if (data.glb_url) {
+                modelViewer.src = data.glb_url;
+                downloadGlbBtn.href = data.glb_url;
+            }
+        }
+
+        // New crop button
+        newCropBtn.addEventListener('click', () => {
+            result3d.classList.remove('visible');
+            cropWorkspace.classList.add('visible');
+            cropRect.style.display = 'none';
+            cropPreviewArea.style.display = 'none';
+            cropActions.style.display = 'none';
+            croppedBase64 = null;
+            generate3dBtn.disabled = false;
+            error3d.classList.remove('visible');
+        });
+    </script>
+</body>
+</html>
