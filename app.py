@@ -10,11 +10,18 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+import logging
+
+import cv2
 import httpx
+import numpy as np
 import trimesh
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
+from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_sso_user(decrypted_userinfo: Optional[str]) -> Optional[dict]:
@@ -163,12 +170,100 @@ async def generate_nail(
     return JSONResponse({"image": result_image})
 
 
+def cutout_accessory(image_bytes: bytes) -> bytes:
+    """使用 GrabCut 算法抠出配饰主体，返回带透明通道的 PNG bytes。
+
+    算法策略：
+    - 图片边缘一圈（border 像素）标记为"确定背景"
+    - 内部区域标记为"可能前景"
+    - 跑 GrabCut 5 次迭代得到前景 mask
+    - 对 mask 做形态学操作去噪 + 填空洞
+    - 背景设为透明，输出 RGBA PNG
+
+    如果抠图失败（异常 / 前景面积异常），返回 None 让调用方 fallback。
+    """
+    try:
+        # 1. 加载图片
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img_bgr is None:
+            logger.warning("cutout: cv2.imdecode failed, image_bytes len=%d", len(image_bytes))
+            return None
+
+        h, w = img_bgr.shape[:2]
+        if w < 20 or h < 20:
+            logger.warning("cutout: image too small %dx%d", w, h)
+            return None
+
+        # 2. 初始化 GrabCut mask
+        mask = np.full((h, w), cv2.GC_PR_FGD, dtype=np.uint8)  # 默认：可能前景
+
+        # 边缘一圈作为"确定背景"
+        border = max(2, min(h, w) // 10)  # 动态边框，至少 2px
+        mask[:border, :] = cv2.GC_BGD       # 上
+        mask[h - border:, :] = cv2.GC_BGD   # 下
+        mask[:, :border] = cv2.GC_BGD       # 左
+        mask[:, w - border:] = cv2.GC_BGD   # 右
+
+        # 确保矩形区域合法（GrabCut 要求 mask 内有足够的前景/背景样本）
+        rect = (border, border, w - 2 * border, h - 2 * border)
+        if rect[2] < 5 or rect[3] < 5:
+            logger.warning("cutout: rect too small after border: %s", rect)
+            return None
+
+        bgd_model = np.zeros((1, 65), dtype=np.float64)
+        fgd_model = np.zeros((1, 65), dtype=np.float64)
+
+        # 3. 跑 GrabCut
+        cv2.grabCut(img_bgr, mask, rect, bgd_model, fgd_model, iterCount=5, mode=cv2.GC_INIT_WITH_MASK)
+
+        # 4. 提取前景 mask（GC_FGD=1, GC_PR_FGD=3 都算前景）
+        fg_mask = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+
+        # 5. 形态学操作：去噪 + 填空洞
+        kernel_small = np.ones((3, 3), np.uint8)
+        kernel_med = np.ones((5, 5), np.uint8)
+        # 开运算去小噪点
+        fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
+        # 闭运算填小空洞
+        fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel_med, iterations=2)
+
+        # 6. 检查前景面积占比
+        total_pixels = h * w
+        fg_pixels = np.count_nonzero(fg_mask)
+        fg_ratio = fg_pixels / total_pixels
+
+        if fg_ratio < 0.03 or fg_ratio > 0.97:
+            logger.warning("cutout: foreground ratio abnormal: %.2f%% (threshold 3%%-97%%)", fg_ratio * 100)
+            return None
+
+        # 7. 构建 RGBA 图片
+        img_rgba = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2BGRA)
+        img_rgba[:, :, 3] = fg_mask  # alpha 通道
+
+        # 8. 编码 PNG
+        success, buf = cv2.imencode('.png', img_rgba)
+        if not success:
+            logger.warning("cutout: cv2.imencode failed")
+            return None
+
+        return buf.tobytes()
+
+    except Exception as e:
+        logger.exception("cutout: GrabCut failed: %s", e)
+        return None
+
+
 @app.post("/api/generate-3d")
 async def generate_3d(
     request: Request,
     decrypted_userinfo: Optional[str] = Header(None, alias="Decrypted-Userinfo"),
 ):
-    """提交 HY-3D-3.1 图生3D 任务（框选配饰图片 base64）"""
+    """提交 HY-3D-3.1 图生3D 任务（框选配饰图片 base64）
+
+    流程：解码 base64 → GrabCut 抠图去背景 → 重新编码 → 送 HY-3D
+    抠图失败则 fallback 使用原图，不阻塞请求。
+    """
     user = _require_user(decrypted_userinfo)
 
     body = await request.json()
@@ -176,18 +271,32 @@ async def generate_3d(
     if not image_data:
         raise HTTPException(400, "缺少配饰图片数据")
 
-    # 解析 base64 data URI → 纯 base64
+    # 解析 base64 data URI → 纯 base64 → 原始 bytes
     if image_data.startswith("data:"):
         b64_str = image_data.split(",", 1)[1]
     else:
         b64_str = image_data
+
+    raw_bytes = base64.b64decode(b64_str)
+
+    # GrabCut 抠图：去背景（手指/皮肤），只保留配饰主体
+    cutout_bytes = cutout_accessory(raw_bytes)
+    if cutout_bytes is not None:
+        logger.info("generate-3d: cutout succeeded, using cutout image")
+        final_bytes = cutout_bytes
+    else:
+        logger.warning("generate-3d: cutout failed, fallback to original image")
+        final_bytes = raw_bytes
+
+    # 重新编码为 base64
+    final_b64 = base64.b64encode(final_bytes).decode("ascii")
 
     api_key = _load_rai_api_key()
     api_url = "http://maas.devops.xiaohongshu.com/gateway-v2/v1/tasks"
 
     payload = {
         "model": "hy-3d-3.1",
-        "input": {"image_base64": b64_str},
+        "input": {"image_base64": final_b64},
         "parameters": {
             "generate_type": "Normal",
             "enable_pbr": True,
@@ -370,13 +479,27 @@ def whoami(
 async def debug_env():
     import sys
     result = {"python": sys.version}
-    for mod in ("trimesh", "numpy", "manifold3d", "lxml"):
+    for mod in ("trimesh", "numpy", "manifold3d", "lxml", "cv2", "PIL"):
         try:
             m = __import__(mod)
             result[mod] = getattr(m, "__version__", "installed")
         except ImportError as e:
             result[mod] = f"MISSING: {e}"
     return result
+
+
+@app.get("/api/debug/cv")
+async def debug_cv():
+    """验证 cv2 (OpenCV) 是否能正常 import 及版本信息。"""
+    try:
+        import cv2
+        return {
+            "cv2_version": cv2.__version__,
+            "numpy_version": np.__version__,
+            "ok": True,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.get("/api/debug/fetch")
