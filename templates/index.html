@@ -760,6 +760,31 @@
                         </div>
                     </div>
                 </div>
+                <fieldset style="border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-top:20px">
+                    <legend>彩色 3MF 打印设置</legend>
+                    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
+                        <label>最多颜色数
+                            <select id="printColorCount">
+                                <option value="2">2 色</option>
+                                <option value="4" selected>4 色</option>
+                                <option value="8">8 色</option>
+                                <option value="16">16 色</option>
+                            </select>
+                        </label>
+                        <label>最长边（毫米）
+                            <input id="printSizeMm" type="number" min="1" max="300" step="0.1" value="10" style="width:80px">
+                        </label>
+                        <label>图案细节
+                            <select id="printRefinement">
+                                <option value="0">基础</option>
+                                <option value="1" selected>标准</option>
+                                <option value="2">精细（转换较慢）</option>
+                            </select>
+                        </label>
+                    </div>
+                    <p style="font-size:12px;color:#6b7280;margin-top:10px">颜色会近似为有限耗材色。下载后在 Bambu Studio 中作为项目打开，确认打印机、耗材和尺寸，再切片；透明、珠光和金属效果需匹配实际材料。</p>
+                    <div id="colorExportStatus" role="status" aria-live="polite" style="font-size:13px;margin-top:10px"></div>
+                </fieldset>
                 <div class="result-3d-actions">
                     <a class="btn-3d-download" id="downloadGlbBtn" download="accessory-3d.glb">
                         <span>💾</span>
@@ -771,7 +796,7 @@
                     </button>
                     <button class="btn-3d-download" id="download3mfBtn">
                         <span>🖨️</span>
-                        <span>下载 3MF</span>
+                        <span>下载彩色 3MF</span>
                     </button>
                     <button class="redraw-btn" id="newCropBtn">🔄 框选其他配饰</button>
                 </div>
@@ -1313,6 +1338,12 @@
 
         function show3dResult(data) {
             result3d.classList.add('visible');
+            document.getElementById('colorExportStatus').replaceChildren();
+            currentGlbUrl = data.glb_url || null;
+            if (!currentGlbUrl) {
+                modelViewer.removeAttribute('src');
+                downloadGlbBtn.removeAttribute('href');
+            }
 
             // Preview image
             if (data.preview_url) {
@@ -1335,35 +1366,41 @@
                 alert('GLB 模型地址不可用，请重新生成');
                 return;
             }
+            const printSize = document.getElementById('printSizeMm');
+            const status = document.getElementById('colorExportStatus');
+            if (format === '3mf' && (!printSize.reportValidity() || !printSize.value)) return;
+            const options = format === '3mf' ? {
+                color_count: Number(document.getElementById('printColorCount').value),
+                refinement: Number(document.getElementById('printRefinement').value),
+                size_mm: Number(printSize.value),
+            } : {};
+            if (format === '3mf') status.textContent = '正在读取模型颜色…';
             const originalText = btn.innerHTML;
             btn.classList.add('downloading');
             btn.disabled = true;
             btn.innerHTML = `<span>⏳</span><span>转换中...</span>`;
 
             try {
-                // 前端先下载 GLB（因为 Cowork Pod 访问不了腾讯 CDN）
-                // 优先用 model-viewer 已加载的 GLB（避开 CORS），失败后 fallback 到直接 fetch
+                // Prefer the original GLB so the viewer cannot alter its materials.
                 btn.innerHTML = `<span>⏳</span><span>提取模型中...</span>`;
                 let glbBlob = null;
 
-                // 尝试 1: 从已加载的 model-viewer 导出
-                if (modelViewer && typeof modelViewer.exportScene === 'function') {
-                    try {
-                        glbBlob = await modelViewer.exportScene({binary: true});
-                    } catch (e) {
-                        console.warn('exportScene 失败，尝试直接下载:', e);
-                    }
-                }
-
-                // 尝试 2: fallback 到 fetch（可能被 CORS 拦）
-                if (!glbBlob) {
+                try {
                     btn.innerHTML = `<span>⏳</span><span>下载模型中...</span>`;
                     const glbResp = await fetch(glbUrl);
                     if (!glbResp.ok) {
                         throw new Error(`下载 GLB 失败: HTTP ${glbResp.status}`);
                     }
                     glbBlob = await glbResp.blob();
+                } catch (downloadError) {
+                    // Only export a viewer that has finished loading this model.
+                    if (!modelViewer.loaded || modelViewer.src !== glbUrl || typeof modelViewer.exportScene !== 'function') {
+                        throw new Error('原始 GLB 下载失败，请等待模型加载完成后重试');
+                    }
+                    glbBlob = await modelViewer.exportScene({binary: true});
+                    if (format === '3mf') status.textContent = '原文件下载失败，正在使用已加载模型转换。';
                 }
+                if (glbBlob.size > 50 * 1024 * 1024) throw new Error('GLB 文件不能超过 50MB');
 
                 // 转 base64
                 const glbBase64 = await new Promise((resolve, reject) => {
@@ -1377,7 +1414,7 @@
                 const resp = await fetch('/api/convert-format', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ glb_base64: glbBase64, format: format }),
+                    body: JSON.stringify({ glb_base64: glbBase64, format: format, ...options }),
                 });
 
                 if (!resp.ok) {
@@ -1386,16 +1423,36 @@
                 }
 
                 const blob = await resp.blob();
+                if (format === '3mf') {
+                    const palette = (resp.headers.get('X-Color-Palette') || '').split(',').filter(Boolean);
+                    const warnings = JSON.parse(resp.headers.get('X-Conversion-Warnings') || '[]');
+                    status.replaceChildren();
+                    const summary = document.createElement('p');
+                    summary.textContent = `已导出 ${palette.length} 色，尺寸 ${resp.headers.get('X-Model-Size-Mm')} mm。请在 Bambu Studio 中确认耗材映射。`;
+                    status.appendChild(summary);
+                    palette.forEach((color, index) => {
+                        if (!/^#[0-9A-F]{6}$/i.test(color)) return;
+                        const swatch = document.createElement('span');
+                        swatch.style.cssText = `display:inline-block;background:${color};width:20px;height:20px;border:1px solid #999;border-radius:4px;margin:8px 6px 0 0`;
+                        swatch.title = `耗材 ${index + 1}：${color}`;
+                        swatch.setAttribute('aria-label', swatch.title);
+                        status.appendChild(swatch);
+                    });
+                    const note = document.createElement('p');
+                    note.textContent = warnings.join(' ');
+                    status.appendChild(note);
+                }
                 const ext = format === '3mf' ? '3mf' : 'stl';
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `accessory-3d.${ext}`;
+                a.download = format === '3mf' ? 'accessory-color.3mf' : `accessory-3d.${ext}`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
             } catch (err) {
+                if (format === '3mf') status.textContent = `转换失败：${err.message}`;
                 alert(`转换失败：${err.message}`);
             } finally {
                 btn.classList.remove('downloading');

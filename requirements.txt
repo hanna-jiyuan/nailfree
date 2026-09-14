@@ -3,7 +3,7 @@ uvicorn[standard]
 jinja2
 python-multipart
 httpx
-trimesh>=4.0
+trimesh>=4.12.2,<5
 numpy
 manifold3d
 lxml

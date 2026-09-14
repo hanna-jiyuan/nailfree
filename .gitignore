@@ -1,3 +1,7 @@
 .rai-api-key
 .rai-api-key
 .rai-api-key
+.venv/
+__pycache__/
+.pytest_cache/
+artifacts/

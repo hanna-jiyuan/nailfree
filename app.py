@@ -7,6 +7,7 @@ import io
 import json
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -20,8 +21,12 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadF
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
+from starlette.concurrency import run_in_threadpool
+
+from color_3mf import ConversionError, MAX_GLB_BYTES, convert_glb_to_color_3mf
 
 logger = logging.getLogger(__name__)
+_color_conversion_slots = threading.BoundedSemaphore(2)
 
 
 def _parse_sso_user(decrypted_userinfo: Optional[str]) -> Optional[dict]:
@@ -395,8 +400,19 @@ async def convert_format(
     """将 GLB 模型转换为 STL 或 3MF 格式用于 3D 打印"""
     user = _require_user(decrypted_userinfo)
 
-    body = await request.json()
-    fmt = body.get("format", "").lower()
+    # Bound encoded model size before parsing a potentially large JSON body.
+    raw_body = bytearray()
+    async for chunk in request.stream():
+        raw_body.extend(chunk)
+        if len(raw_body) > MAX_GLB_BYTES * 4 // 3 + 8192:
+            raise HTTPException(413, "GLB 文件不能超过 50MB")
+    try:
+        body = json.loads(raw_body)
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(400, "请求必须是有效的 JSON")
+    if not isinstance(body, dict) or not isinstance(body.get("format"), str):
+        raise HTTPException(400, "缺少有效的 format 参数")
+    fmt = body["format"].lower()
     glb_base64 = body.get("glb_base64", "")
     glb_url = body.get("glb_url", "")
 
@@ -404,14 +420,18 @@ async def convert_format(
         raise HTTPException(400, "format 参数必须为 stl 或 3mf")
 
     glb_bytes: bytes
+    if not isinstance(glb_base64, str) or not isinstance(glb_url, str):
+        raise HTTPException(400, "模型数据必须是字符串")
     if glb_base64:
         # 浏览器先下 GLB，再 base64 传给后端（因为 Cowork Pod 访问不了腾讯 CDN）
         try:
             if "," in glb_base64:
                 glb_base64 = glb_base64.split(",", 1)[1]
-            glb_bytes = base64.b64decode(glb_base64)
+            glb_bytes = base64.b64decode(glb_base64, validate=True)
         except Exception as e:
             raise HTTPException(400, f"glb_base64 解码失败：{e}")
+    elif glb_url and fmt == "3mf":
+        raise HTTPException(400, "彩色 3MF 转换请上传 glb_base64 数据")
     elif glb_url:
         # 兜底：后端直接下载（多数情况会失败，仅内网 URL 可用）
         try:
@@ -425,30 +445,55 @@ async def convert_format(
     else:
         raise HTTPException(400, "必须提供 glb_base64 或 glb_url")
 
+    if len(glb_bytes) > MAX_GLB_BYTES:
+        raise HTTPException(413, "GLB 文件不能超过 50MB")
+
+    if fmt == "3mf":
+        if not _color_conversion_slots.acquire(blocking=False):
+            raise HTTPException(429, "彩色转换繁忙，请稍后重试")
+        try:
+            result = await run_in_threadpool(
+                convert_glb_to_color_3mf, glb_bytes,
+                color_count=body.get("color_count", 4),
+                refinement=body.get("refinement", 1),
+                size_mm=body.get("size_mm"),
+            )
+        except ConversionError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception:
+            logger.exception("彩色 3MF 转换失败")
+            raise HTTPException(500, "彩色 3MF 转换失败，请检查模型或降低细节等级")
+        finally:
+            _color_conversion_slots.release()
+        return StreamingResponse(
+            io.BytesIO(result.data), media_type="model/3mf",
+            headers={
+                "Content-Disposition": 'attachment; filename="accessory-color.3mf"',
+                "X-Color-Palette": ",".join(result.palette),
+                "X-Model-Size-Mm": ",".join(f"{v:.2f}" for v in result.size_mm),
+                "X-Conversion-Warnings": json.dumps(result.warnings, ensure_ascii=True),
+            },
+        )
+
     # Convert using trimesh
     try:
         mesh = trimesh.load(io.BytesIO(glb_bytes), file_type="glb")
     except Exception as e:
         raise HTTPException(500, f"加载 GLB 模型失败：{e}")
 
-    # If it's a Scene, merge all meshes
+    # Apply scene transforms and retain repeated instances before STL export.
     if isinstance(mesh, trimesh.Scene):
         geometries = list(mesh.geometry.values())
         if not geometries:
             raise HTTPException(500, "GLB 模型中没有找到几何体")
-        mesh = trimesh.util.concatenate(geometries)
+        mesh = mesh.to_mesh()
 
     # Export to requested format
     try:
         output = io.BytesIO()
-        if fmt == "stl":
-            mesh.export(output, file_type="stl")
-            mime = "application/sla"
-            filename = "accessory-3d.stl"
-        else:
-            mesh.export(output, file_type="3mf")
-            mime = "model/3mf-binary"
-            filename = "accessory-3d.3mf"
+        mesh.export(output, file_type="stl")
+        mime = "application/sla"
+        filename = "accessory-3d.stl"
         output.seek(0)
     except Exception as e:
         raise HTTPException(500, f"转换格式失败：{e}")
