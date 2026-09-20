@@ -7,6 +7,10 @@ import io
 import json
 import os
 import tempfile
+import asyncio
+import time
+import uuid
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -17,11 +21,15 @@ import httpx
 import numpy as np
 import trimesh
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
+from starlette.concurrency import run_in_threadpool
+
+from color_3mf import ConversionError, MAX_GLB_BYTES, convert_glb_to_color_3mf
 
 logger = logging.getLogger(__name__)
+_color_conversion_slots = threading.BoundedSemaphore(2)
 
 
 def _parse_sso_user(decrypted_userinfo: Optional[str]) -> Optional[dict]:
@@ -149,18 +157,57 @@ async def _call_chat_llm(system_prompt: str, user_content) -> str:
     return content
 
 
+# ===== 文生 3D：描述 → TRELLIS.2 英文 3D prompt =====
+
+_OPTIMIZE_3D_BASE = (
+    "你是一位资深 3D 配饰设计师，擅长把用户的想法转化为英文 3D 生成提示词（用于 TRELLIS 文生3D 模型）。"
+)
+
+OPTIMIZE_3D_SYSTEM_PROMPTS = {
+    # 有描述：中→英专业 3D prompt
+    "desc-only": (
+        _OPTIMIZE_3D_BASE
+        + "\n本次任务：把用户的美甲配饰/立体饰品描述转化为一段专业的英文 3D 提示词。要求：\n"
+        "1. 保留用户指定的全部元素（造型、颜色、材质、风格），不得替换或删除；\n"
+        "2. 补充 3D 物体所需细节：整体形状与比例、表面纹理、光泽/哑光/金属感、装饰细节；\n"
+        "3. 描述一个独立的立体实物（如蝴蝶结、花朵、宝石、立体摆件），不要出现指甲、手、佩戴等场景词；\n"
+        "输出要求：纯英文，30~80 词，一句话或短段落；不要标题、引号或 markdown 格式。"
+    ),
+    # 有参考图 + 有描述：看图提取设计 + 应用修改
+    "ref+desc": (
+        _OPTIMIZE_3D_BASE
+        + "\n本次任务：用户会上传一张美甲/配饰参考图，并给出修改要求。请：\n"
+        "1. 观察参考图，把其中最有代表性的立体设计元素（花朵、蝴蝶结、钻饰、链条等）转化为一个可独立生成的 3D 物体；\n"
+        "2. 将用户的修改要求精确应用到该设计上；未提及的部分保持参考图原样；\n"
+        "3. 描述一个独立的立体实物，不要出现指甲、手、佩戴等场景词；\n"
+        "输出要求：纯英文，30~80 词，一句话或短段落；不要标题、引号或 markdown 格式。"
+    ),
+    # 有参考图 + 无描述
+    "ref-only": (
+        _OPTIMIZE_3D_BASE
+        + "\n本次任务：用户上传一张美甲/配饰参考图，未附加说明。请把图中最有代表性的立体设计元素"
+        "转化为一个可独立生成的 3D 实物描述（形状、颜色、材质、纹理、装饰细节）；"
+        "不要出现指甲、手、佩戴等场景词。输出纯英文，30~80 词；不要标题、引号或 markdown 格式。"
+    ),
+}
+
+
 @app.post("/api/optimize-prompt")
 async def optimize_prompt(
     style: Optional[str] = Form(None),
+    target: Optional[str] = Form("2d"),
     reference: Optional[UploadFile] = File(None),
     decrypted_userinfo: Optional[str] = Header(None, alias="Decrypted-Userinfo"),
 ):
-    """一键优化：把用户的文字需求 / 参考图转化为专业设计描述。
+    """一键优化：把用户的文字需求 / 参考图转化为专业描述。
+
+    target=2d（默认）：美甲效果图设计描述（中文，给 gpt-image-2 用）
+    target=3d：独立 3D 配饰实物描述（英文，给 TRELLIS.2 文生3D 用）
 
     按输入内容分四种情况：
     - 有参考图 + 有描述词 → 分析参考图 + 应用用户修改要求
     - 有参考图 + 无描述词 → 忠实还原参考图
-    - 无参考图 + 有描述词 → 扩写为专业设计描述
+    - 无参考图 + 有描述词 → 扩写为专业描述
     - 无参考图 + 无描述词 → 400（无可优化内容）
     """
     _require_user(decrypted_userinfo)
@@ -175,7 +222,10 @@ async def optimize_prompt(
     has_ref = ref_bytes is not None
 
     if not has_ref and not has_desc:
-        raise HTTPException(400, "请先输入美甲描述或上传参考图，再使用一键优化")
+        raise HTTPException(400, "请先输入描述或上传参考图，再使用一键优化")
+
+    is_3d = (target or "2d").strip().lower() in ("3d", "t3d", "text-to-3d")
+    prompts = OPTIMIZE_3D_SYSTEM_PROMPTS if is_3d else OPTIMIZE_SYSTEM_PROMPTS
 
     if has_ref:
         ref_b64 = base64.b64encode(ref_bytes).decode("ascii")
@@ -185,22 +235,184 @@ async def optimize_prompt(
         }
         if has_desc:
             case = "ref+desc"
-            user_content = [
-                {"type": "text", "text": f"参考图美甲设计如上。用户修改要求：{style_text}"},
-                image_part,
-            ]
+            if is_3d:
+                text = f"参考图设计如上。用户修改要求：{style_text}"
+            else:
+                text = f"参考图美甲设计如上。用户修改要求：{style_text}"
+            user_content = [{"type": "text", "text": text}, image_part]
         else:
             case = "ref-only"
             user_content = [
-                {"type": "text", "text": "请复刻参考图中的美甲设计。"},
+                {"type": "text", "text": "请转化为可独立生成的 3D 实物描述。" if is_3d else "请复刻参考图中的美甲设计。"},
                 image_part,
             ]
     else:
         case = "desc-only"
-        user_content = f"用户的美甲想法：{style_text}"
+        user_content = f"用户的想法：{style_text}"
 
-    optimized = await _call_chat_llm(OPTIMIZE_SYSTEM_PROMPTS[case], user_content)
-    return JSONResponse({"prompt": optimized, "case": case})
+    optimized = await _call_chat_llm(prompts[case], user_content)
+    return JSONResponse({"prompt": optimized, "case": case, "target": "3d" if is_3d else "2d"})
+
+
+# ============================================================
+# TRELLIS.2 图生3D 服务（自建 8xH20 多卡网关）集成
+# 网关同步返回 GLB；这里用后台任务 + 内存任务表，对接前端「提交+轮询」流程。
+# ============================================================
+TRELLIS2_BASE_URL = os.environ.get("TRELLIS2_BASE_URL", "http://10.142.3.181:8080").rstrip("/")
+TRELLIS2_PIPELINE_TYPE = os.environ.get("TRELLIS2_PIPELINE_TYPE", "1024_cascade")  # 1024 质量显著更好(~28s)，512 更快但糊
+TRELLIS2_TIMEOUT = float(os.environ.get("TRELLIS2_TIMEOUT", "900"))
+_TRELLIS_DIR = Path(tempfile.gettempdir()) / "nailfree_trellis"
+_TRELLIS_DIR.mkdir(parents=True, exist_ok=True)
+_trellis_tasks: dict = {}          # task_id -> {status, glb_url, preview_url, error, ...}
+_trellis_bg: dict = {}             # task_id -> asyncio.Task（持有引用防 GC）
+
+
+def _prune_trellis_tasks(keep: int = 30):
+    """限制内存任务数：删除最旧任务及其 GLB 临时文件。"""
+    while len(_trellis_tasks) > keep:
+        old = next(iter(_trellis_tasks))
+        _trellis_tasks.pop(old, None)
+        _trellis_bg.pop(old, None)
+        try:
+            (_TRELLIS_DIR / f"{old}.glb").unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+async def _run_trellis(task_id: str, image_bytes: bytes, preview_uri: str, params: dict = None):
+    """后台调用 TRELLIS.2 网关生成 GLB，落临时文件，结果写入 _trellis_tasks。
+    params 可含 pipeline_type/steps/texture_size/decimation_target/seed，透传给网关。"""
+    params = params or {}
+    data = {"pipeline_type": params.get("pipeline_type") or TRELLIS2_PIPELINE_TYPE}
+    for _k in ("steps", "texture_size", "decimation_target", "seed"):
+        _v = params.get(_k)
+        if _v is not None and _v != "":
+            data[_k] = str(_v)
+    try:
+        # trust_env=False：走直连内网，不经业务代理
+        async with httpx.AsyncClient(timeout=TRELLIS2_TIMEOUT, trust_env=False) as client:
+            resp = await client.post(
+                f"{TRELLIS2_BASE_URL}/v1/images/to3d",
+                files={"image": ("accessory.png", image_bytes, "image/png")},
+                data=data,
+            )
+        await _finish_trellis_task(task_id, resp)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("trellis task %s failed", task_id)
+        _trellis_tasks[task_id] = {"status": "failed", "error": f"调用 TRELLIS 失败：{e}"}
+
+
+async def _run_trellis_text(task_id: str, prompt: str, params: dict = None):
+    """文生3D 管线：文字描述 → gpt-image-2 概念图 → TRELLIS.2 generations（text+image）→ GLB。
+
+    网关 generations 端点要求同时提供 text 与 image（图+文混合条件），
+    故先用 gpt-image-2 把文字渲染成白底产品图，再送入网关。"""
+    params = params or {}
+    try:
+        # 1) 文字 → 白底概念图（gpt-image-2）
+        _trellis_tasks[task_id]["stage"] = "正在生成概念图（gpt-image-2）..."
+        img_prompt = (
+            f"Product render of: {prompt}. "
+            "A single centered 3D object on a pure white background, studio lighting, "
+            "high detail, no hands, no text, no watermark."
+        )
+        api_key = _load_rai_api_key()
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            resp = await client.post(
+                "https://maas.devops.rednote.life/openai/images/generations",
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                json={
+                    "model": "gpt-image-2",
+                    "prompt": img_prompt,
+                    "n": 1,
+                    "size": "1024x1024",
+                    "quality": "medium",
+                    "output_format": "jpeg",
+                },
+            )
+        if resp.status_code != 200:
+            _trellis_tasks[task_id] = {
+                "status": "failed",
+                "error": f"概念图生成失败 {resp.status_code}: {resp.text[:200]}",
+            }
+            return
+        item = resp.json()["data"][0]
+        if "b64_json" in item and item["b64_json"]:
+            img_bytes = base64.b64decode(item["b64_json"])
+        elif "url" in item and item["url"]:
+            async with httpx.AsyncClient(timeout=60.0) as c2:
+                img_bytes = (await c2.get(item["url"])).content
+        else:
+            _trellis_tasks[task_id] = {"status": "failed", "error": "概念图响应缺少图像数据"}
+            return
+        preview_uri = "data:image/jpeg;base64," + base64.b64encode(img_bytes).decode("ascii")
+
+        # 2) 概念图 + 文字 → TRELLIS.2 3D
+        _trellis_tasks[task_id]["stage"] = "TRELLIS.2 文生 3D 生成中..."
+        data = {
+            "text": prompt,
+            "image": preview_uri,
+            "pipeline_type": params.get("pipeline_type") or TRELLIS2_PIPELINE_TYPE,
+        }
+        for _k in ("steps", "texture_size", "decimation_target", "seed"):
+            _v = params.get(_k)
+            if _v is not None and _v != "":
+                data[_k] = _v
+        async with httpx.AsyncClient(timeout=TRELLIS2_TIMEOUT, trust_env=False) as client:
+            resp = await client.post(f"{TRELLIS2_BASE_URL}/v1/images/generations", json=data)
+        if resp.status_code != 200:
+            _trellis_tasks[task_id] = {
+                "status": "failed",
+                "error": f"TRELLIS 文生3D 错误 {resp.status_code}: {resp.text[:300]}",
+            }
+            return
+        glb_url = (resp.json().get("data") or [{}])[0].get("url")
+        if not glb_url:
+            _trellis_tasks[task_id] = {"status": "failed", "error": "TRELLIS 未返回 GLB 地址"}
+            return
+
+        # 3) 下载 GLB 落盘（浏览器不可直达网关，后端代理）
+        async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
+            glb_resp = await client.get(glb_url)
+        if glb_resp.status_code != 200:
+            _trellis_tasks[task_id] = {
+                "status": "failed",
+                "error": f"GLB 下载失败 {glb_resp.status_code}",
+            }
+            return
+        (_TRELLIS_DIR / f"{task_id}.glb").write_bytes(glb_resp.content)
+        info = (resp.json().get("data") or [{}])[0]
+        _trellis_tasks[task_id] = {
+            "status": "completed",
+            "glb_url": f"/api/trellis-glb/{task_id}",
+            "preview_url": preview_uri,
+            "num_vertices": info.get("num_vertices"),
+            "num_faces": info.get("num_faces"),
+            "engine": "trellis2",
+            "mode": "text",
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.exception("trellis text task %s failed", task_id)
+        _trellis_tasks[task_id] = {"status": "failed", "error": f"调用 TRELLIS 文生3D 失败：{e}"}
+
+
+async def _finish_trellis_task(task_id: str, resp):
+    """处理网关同步返回的 GLB 响应，写入任务表。"""
+    if resp.status_code != 200:
+        _trellis_tasks[task_id] = {
+            "status": "failed",
+            "error": f"TRELLIS 服务错误 {resp.status_code}: {resp.text[:300]}",
+        }
+        return
+    (_TRELLIS_DIR / f"{task_id}.glb").write_bytes(resp.content)
+    _trellis_tasks[task_id] = {
+        "status": "completed",
+        "glb_url": f"/api/trellis-glb/{task_id}",
+        "preview_url": None,
+        "num_vertices": resp.headers.get("X-Num-Vertices"),
+        "num_faces": resp.headers.get("X-Num-Faces"),
+        "engine": "trellis2",
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -435,7 +647,19 @@ async def generate_3d(
 
     raw_bytes = base64.b64decode(b64_str)
 
-    # GrabCut 抠图：去背景（手指/皮肤），只保留配饰主体
+    # 引擎选择：trellis2（自建多卡服务）或 hunyuan（HY-3D，默认）
+    engine = (body.get("engine") or "hunyuan").lower()
+    if engine in ("trellis2", "trellis", "trellis.2"):
+        # trellis2 自带 RMBG-2.0 去背景，直接送原始框选图，跳过 GrabCut（避免双重去背景损质）
+        preview_uri = image_data if image_data.startswith("data:") else ("data:image/png;base64," + b64_str)
+        t2_params = {k: body.get(k) for k in ("pipeline_type", "steps", "texture_size", "decimation_target", "seed")}
+        task_id = "t2-" + uuid.uuid4().hex
+        _prune_trellis_tasks()
+        _trellis_tasks[task_id] = {"status": "in_progress", "engine": "trellis2"}
+        _trellis_bg[task_id] = asyncio.create_task(_run_trellis(task_id, raw_bytes, preview_uri, t2_params))
+        return JSONResponse({"task_id": task_id, "status": "in_progress", "engine": "trellis2"})
+
+    # 以下 hunyuan(HY-3D)：GrabCut 抠图去背景（手指/皮肤），只保留配饰主体
     cutout_bytes = cutout_accessory(raw_bytes)
     if cutout_bytes is not None:
         logger.info("generate-3d: cutout succeeded, using cutout image")
@@ -485,6 +709,34 @@ async def generate_3d(
     return JSONResponse({"task_id": task_id, "status": data.get("status", "queued")})
 
 
+@app.post("/api/generate-3d-text")
+async def generate_3d_text(
+    request: Request,
+    decrypted_userinfo: Optional[str] = Header(None, alias="Decrypted-Userinfo"),
+):
+    """提交 TRELLIS.2 文生3D 任务（纯文字描述 → 3D 配饰模型）
+
+    body: {prompt: str, pipeline_type?, steps?, texture_size?, decimation_target?, seed?}
+    复用 t2- 任务表与 /api/check-3d 轮询。
+    """
+    _require_user(decrypted_userinfo)
+
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "请求必须是 JSON 对象")
+
+    prompt = str(body.get("prompt") or "").strip()[:2000]
+    if not prompt:
+        raise HTTPException(400, "请输入 3D 配饰描述")
+
+    params = {k: body.get(k) for k in ("pipeline_type", "steps", "texture_size", "decimation_target", "seed")}
+    task_id = "t2-" + uuid.uuid4().hex
+    _prune_trellis_tasks()
+    _trellis_tasks[task_id] = {"status": "in_progress", "engine": "trellis2", "mode": "text"}
+    _trellis_bg[task_id] = asyncio.create_task(_run_trellis_text(task_id, prompt, params))
+    return JSONResponse({"task_id": task_id, "status": "in_progress", "engine": "trellis2", "mode": "text"})
+
+
 @app.get("/api/check-3d")
 async def check_3d_status(
     task_id: str = "",
@@ -493,6 +745,13 @@ async def check_3d_status(
     """轮询 HY-3D-3.1 任务状态"""
     if not task_id:
         return JSONResponse({"error": "missing task_id"}, status_code=400)
+
+    # TRELLIS.2 任务：查内存任务表（后台任务写入）
+    if task_id.startswith("t2-"):
+        t = _trellis_tasks.get(task_id)
+        if not t:
+            return JSONResponse({"status": "failed", "task_id": task_id, "error": "任务不存在或已过期"})
+        return JSONResponse({**t, "task_id": task_id})
 
     try:
         api_key = _load_rai_api_key()
@@ -551,8 +810,19 @@ async def convert_format(
     """将 GLB 模型转换为 STL 或 3MF 格式用于 3D 打印"""
     user = _require_user(decrypted_userinfo)
 
-    body = await request.json()
-    fmt = body.get("format", "").lower()
+    # Bound encoded model size before parsing a potentially large JSON body.
+    raw_body = bytearray()
+    async for chunk in request.stream():
+        raw_body.extend(chunk)
+        if len(raw_body) > MAX_GLB_BYTES * 4 // 3 + 8192:
+            raise HTTPException(413, "GLB 文件不能超过 50MB")
+    try:
+        body = json.loads(raw_body)
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(400, "请求必须是有效的 JSON")
+    if not isinstance(body, dict) or not isinstance(body.get("format"), str):
+        raise HTTPException(400, "缺少有效的 format 参数")
+    fmt = body["format"].lower()
     glb_base64 = body.get("glb_base64", "")
     glb_url = body.get("glb_url", "")
 
@@ -560,14 +830,18 @@ async def convert_format(
         raise HTTPException(400, "format 参数必须为 stl 或 3mf")
 
     glb_bytes: bytes
+    if not isinstance(glb_base64, str) or not isinstance(glb_url, str):
+        raise HTTPException(400, "模型数据必须是字符串")
     if glb_base64:
         # 浏览器先下 GLB，再 base64 传给后端（因为 Cowork Pod 访问不了腾讯 CDN）
         try:
             if "," in glb_base64:
                 glb_base64 = glb_base64.split(",", 1)[1]
-            glb_bytes = base64.b64decode(glb_base64)
+            glb_bytes = base64.b64decode(glb_base64, validate=True)
         except Exception as e:
             raise HTTPException(400, f"glb_base64 解码失败：{e}")
+    elif glb_url and fmt == "3mf":
+        raise HTTPException(400, "彩色 3MF 转换请上传 glb_base64 数据")
     elif glb_url:
         # 兜底：后端直接下载（多数情况会失败，仅内网 URL 可用）
         try:
@@ -581,30 +855,55 @@ async def convert_format(
     else:
         raise HTTPException(400, "必须提供 glb_base64 或 glb_url")
 
+    if len(glb_bytes) > MAX_GLB_BYTES:
+        raise HTTPException(413, "GLB 文件不能超过 50MB")
+
+    if fmt == "3mf":
+        if not _color_conversion_slots.acquire(blocking=False):
+            raise HTTPException(429, "彩色转换繁忙，请稍后重试")
+        try:
+            result = await run_in_threadpool(
+                convert_glb_to_color_3mf, glb_bytes,
+                color_count=body.get("color_count", 4),
+                refinement=body.get("refinement", 1),
+                size_mm=body.get("size_mm"),
+            )
+        except ConversionError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception:
+            logger.exception("彩色 3MF 转换失败")
+            raise HTTPException(500, "彩色 3MF 转换失败，请检查模型或降低细节等级")
+        finally:
+            _color_conversion_slots.release()
+        return StreamingResponse(
+            io.BytesIO(result.data), media_type="model/3mf",
+            headers={
+                "Content-Disposition": 'attachment; filename="accessory-color.3mf"',
+                "X-Color-Palette": ",".join(result.palette),
+                "X-Model-Size-Mm": ",".join(f"{v:.2f}" for v in result.size_mm),
+                "X-Conversion-Warnings": json.dumps(result.warnings, ensure_ascii=True),
+            },
+        )
+
     # Convert using trimesh
     try:
         mesh = trimesh.load(io.BytesIO(glb_bytes), file_type="glb")
     except Exception as e:
         raise HTTPException(500, f"加载 GLB 模型失败：{e}")
 
-    # If it's a Scene, merge all meshes
+    # Apply scene transforms and retain repeated instances before STL export.
     if isinstance(mesh, trimesh.Scene):
         geometries = list(mesh.geometry.values())
         if not geometries:
             raise HTTPException(500, "GLB 模型中没有找到几何体")
-        mesh = trimesh.util.concatenate(geometries)
+        mesh = mesh.to_mesh()
 
     # Export to requested format
     try:
         output = io.BytesIO()
-        if fmt == "stl":
-            mesh.export(output, file_type="stl")
-            mime = "application/sla"
-            filename = "accessory-3d.stl"
-        else:
-            mesh.export(output, file_type="3mf")
-            mime = "model/3mf-binary"
-            filename = "accessory-3d.3mf"
+        mesh.export(output, file_type="stl")
+        mime = "application/sla"
+        filename = "accessory-3d.stl"
         output.seek(0)
     except Exception as e:
         raise HTTPException(500, f"转换格式失败：{e}")
@@ -614,6 +913,17 @@ async def convert_format(
         media_type=mime,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/api/trellis-glb/{task_id}")
+async def trellis_glb(task_id: str):
+    """同源提供 TRELLIS.2 生成的 GLB（避免浏览器直连 H20 网关的可达性问题）。"""
+    if not task_id.startswith("t2-") or "/" in task_id or ".." in task_id:
+        raise HTTPException(400, "bad task_id")
+    p = _TRELLIS_DIR / f"{task_id}.glb"
+    if not p.exists():
+        raise HTTPException(404, "GLB 不存在或已过期")
+    return FileResponse(str(p), media_type="model/gltf-binary", filename="accessory-3d.glb")
 
 
 @app.get("/health")
@@ -678,6 +988,55 @@ async def debug_fetch(url: str):
     except Exception as e:
         result["env_proxy"] = f"ERR: {type(e).__name__}: {e}"
     return result
+
+
+@app.post("/api/debug/trellis-post")
+async def trellis_post(request: Request):
+    """调试：向 TRELLIS.2 网关发 POST。body: {path, json?{...}, form?{...}, files?{name: dataURL}}"""
+    body = await request.json()
+    url = f"{TRELLIS2_BASE_URL}/{str(body.get('path', '')).lstrip('/')}"
+    jbody = body.get("json")
+    fdata = body.get("form") or None
+    files = None
+    if body.get("files"):
+        files = {}
+        for name, data_url in body["files"].items():
+            header, _, b64 = str(data_url).partition(",")
+            mime = "image/png"
+            if "jpeg" in header or "jpg" in header:
+                mime = "image/jpeg"
+            files[name] = (f"{name}.png", base64.b64decode(b64), mime)
+    try:
+        async with httpx.AsyncClient(timeout=600.0, trust_env=False) as c:
+            r = await c.post(url, json=jbody, data=fdata, files=files)
+        ct = r.headers.get("content-type", "")
+        out = {"url": url, "status": r.status_code, "content_type": ct, "len": len(r.content)}
+        if "json" in ct:
+            out["body"] = r.text[:1200]
+        else:
+            out["body_preview"] = r.content[:120]
+        return out
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+@app.get("/api/debug/trellis-openapi")
+async def trellis_openapi(detail: str = ""):
+    """拉取 TRELLIS.2 网关的 openapi.json（调试用）。detail=<path> 时返回该路径完整定义。"""
+    try:
+        async with httpx.AsyncClient(timeout=15.0, trust_env=False) as c:
+            r = await c.get(f"{TRELLIS2_BASE_URL}/openapi.json")
+        if r.status_code != 200:
+            return {"status": r.status_code, "body": r.text[:500]}
+        spec = r.json()
+        if detail:
+            return {"detail": spec.get("paths", {}).get(detail)}
+        paths = {}
+        for p, ops in (spec.get("paths") or {}).items():
+            paths[p] = [m.upper() for m in ops.keys() if m in ("get", "post", "put", "delete")]
+        return {"status": 200, "title": spec.get("info", {}).get("title"), "paths": paths}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
 
 
 @app.get("/api/debug/net-probe")

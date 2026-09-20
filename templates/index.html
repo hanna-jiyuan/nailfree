@@ -463,6 +463,43 @@
             margin-bottom: 24px;
         }
 
+        /* Engine switch (3D 引擎选择) */
+        .engine-switch {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin: -8px 0 24px;
+        }
+        .engine-switch-label { color: #6b7280; font-size: 13px; font-weight: 600; }
+        .engine-toggle {
+            display: inline-flex;
+            background: #f1f3f5;
+            border: 1px solid #e5e7eb;
+            border-radius: 999px;
+            padding: 3px;
+        }
+        .engine-opt {
+            border: none; background: transparent; cursor: pointer;
+            padding: 7px 18px; border-radius: 999px; text-align: center;
+            font-size: 13px; color: #6b7280; font-weight: 600;
+            transition: all .18s ease;
+        }
+        .engine-opt small { display: block; font-weight: 400; font-size: 10px; color: #9ca3af; margin-top: 1px; }
+        .engine-opt.active { background: #fff; color: #111827; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+        .engine-opt.active small { color: #6b7280; }
+
+        /* TRELLIS.2 参数面板 */
+        .t2-params { max-width: 560px; margin: -8px auto 24px; }
+        .t2-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 10px; }
+        .t2-label { color: #6b7280; font-size: 13px; font-weight: 600; }
+        .t2-preset { min-width: 80px; }
+        .t2-adv { text-align: center; }
+        .t2-adv summary { cursor: pointer; color: #7c3aed; font-size: 13px; user-select: none; }
+        .t2-adv-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 16px; margin: 12px auto 0; max-width: 420px; text-align: left; }
+        .t2-adv-grid label { font-size: 12px; color: #4b5563; display: flex; flex-direction: column; gap: 4px; }
+        .t2-adv-grid select, .t2-adv-grid input { padding: 6px 8px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 13px; background: #fff; }
+
         /* Crop area */
         .crop-workspace {
             display: none;
@@ -576,6 +613,67 @@
             border-color: #8b5cf6;
             color: #6d28d9;
         }
+
+        /* Text-to-3D Section */
+        .section-t3d { display: none; }
+        .section-t3d.visible { display: block; }
+        .section-t3d .t3d-input-row { position: relative; }
+        .section-t3d textarea {
+            width: 100%;
+            padding: 14px 18px;
+            border: 1.5px solid #e5e7eb;
+            border-radius: 12px;
+            font-size: 15px;
+            outline: none;
+            transition: all 0.2s;
+            font-family: inherit;
+            resize: vertical;
+            background: rgba(255,255,255,0.6);
+        }
+        .section-t3d textarea:focus { border-color: #a855f7; }
+        .t3d-optimize-btn {
+            position: absolute;
+            right: 10px;
+            top: 8px;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 14px;
+            border: none;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #ec4899, #a855f7);
+            color: white;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s;
+            box-shadow: 0 3px 10px rgba(168, 85, 247, 0.3);
+            z-index: 2;
+        }
+        .t3d-optimize-btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+        .t3d-generate-btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s;
+            box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .t3d-generate-btn:hover:not(:disabled) { transform: translateY(-1px); }
+        .t3d-generate-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .t3d-loading { display: none; text-align: center; padding: 32px 0; }
+        .t3d-loading.visible { display: block; }
+        .t3d-result { display: none; }
+        .t3d-result.visible { display: block; }
 
         /* 3D Loading */
         .loading-3d {
@@ -829,6 +927,49 @@
             <div class="section-3d-title">✨ 3D 配饰生成</div>
             <div class="section-3d-desc">在效果图中框选立体配饰区域（蝴蝶、花朵、水钻等），AI 将其生成为可旋转的 3D 模型</div>
 
+            <!-- 3D 引擎选择 -->
+            <div class="engine-switch" id="engineSwitch">
+                <span class="engine-switch-label">3D 引擎</span>
+                <div class="engine-toggle">
+                    <button type="button" class="engine-opt active" data-engine="hunyuan">混元 3D<small>HY-3D-3.1</small></button>
+                    <button type="button" class="engine-opt" data-engine="trellis2">TRELLIS.2<small>自建 8×H20</small></button>
+                </div>
+            </div>
+
+            <!-- TRELLIS.2 参数(仅 TRELLIS.2 引擎显示) -->
+            <div class="t2-params" id="trellisParams" style="display:none">
+                <div class="t2-row">
+                    <span class="t2-label">质量</span>
+                    <div class="engine-toggle">
+                        <button type="button" class="t2-preset engine-opt" data-pt="512" data-steps="12" data-tex="1024">快速<small>~10s</small></button>
+                        <button type="button" class="t2-preset engine-opt active" data-pt="1024_cascade" data-steps="12" data-tex="2048">标准<small>~30s</small></button>
+                        <button type="button" class="t2-preset engine-opt" data-pt="1536_cascade" data-steps="20" data-tex="4096">高清<small>~2min</small></button>
+                    </div>
+                </div>
+                <details class="t2-adv">
+                    <summary>高级参数（开发者）</summary>
+                    <div class="t2-adv-grid">
+                        <label>分辨率
+                            <select id="t2Pipeline">
+                                <option value="512">512</option>
+                                <option value="1024">1024</option>
+                                <option value="1024_cascade" selected>1024_cascade</option>
+                                <option value="1536_cascade">1536_cascade</option>
+                            </select>
+                        </label>
+                        <label>采样步数<input id="t2Steps" type="number" min="1" max="50" value="12"></label>
+                        <label>贴图分辨率
+                            <select id="t2Texture">
+                                <option value="1024">1024</option>
+                                <option value="2048" selected>2048</option>
+                                <option value="4096">4096</option>
+                            </select>
+                        </label>
+                        <label>随机种子<input id="t2Seed" type="number" value="42"></label>
+                    </div>
+                </details>
+            </div>
+
             <!-- Crop Workspace -->
             <div class="crop-workspace" id="cropWorkspace">
                 <div class="crop-hint">🖱️ 在效果图上拖拽鼠标框选配饰区域，框选完成后点击生成</div>
@@ -894,6 +1035,31 @@
                         </div>
                     </div>
                 </div>
+                <fieldset style="border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-top:20px">
+                    <legend>彩色 3MF 打印设置</legend>
+                    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
+                        <label>最多颜色数
+                            <select id="printColorCount">
+                                <option value="2">2 色</option>
+                                <option value="4" selected>4 色</option>
+                                <option value="8">8 色</option>
+                                <option value="16">16 色</option>
+                            </select>
+                        </label>
+                        <label>最长边（毫米）
+                            <input id="printSizeMm" type="number" min="1" max="300" step="0.1" value="10" style="width:80px">
+                        </label>
+                        <label>图案细节
+                            <select id="printRefinement">
+                                <option value="0">基础</option>
+                                <option value="1" selected>标准</option>
+                                <option value="2">精细（转换较慢）</option>
+                            </select>
+                        </label>
+                    </div>
+                    <p style="font-size:12px;color:#6b7280;margin-top:10px">颜色会近似为有限耗材色。下载后在 Bambu Studio 中作为项目打开，确认打印机、耗材和尺寸，再切片；透明、珠光和金属效果需匹配实际材料。</p>
+                    <div id="colorExportStatus" role="status" aria-live="polite" style="font-size:13px;margin-top:10px"></div>
+                </fieldset>
                 <div class="result-3d-actions">
                     <a class="btn-3d-download" id="downloadGlbBtn" download="accessory-3d.glb">
                         <span>💾</span>
@@ -905,9 +1071,115 @@
                     </button>
                     <button class="btn-3d-download" id="download3mfBtn">
                         <span>🖨️</span>
-                        <span>下载 3MF</span>
+                        <span>下载彩色 3MF</span>
                     </button>
                     <button class="redraw-btn" id="newCropBtn">🔄 框选其他配饰</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====== Text-to-3D Section ====== -->
+        <div class="card section-3d section-t3d visible" id="sectionT3d" style="margin-top: 28px;">
+            <div class="section-3d-title">🪄 文字直生 3D 配饰</div>
+            <div class="section-3d-desc">不需要手图和效果图，直接用文字描述生成可 3D 打印的立体配饰（TRELLIS.2 文生3D，自建 8×H20）</div>
+
+            <div class="t3d-input-row" style="margin-top: 18px;">
+                <button class="t3d-optimize-btn" id="t3dOptimizeBtn" type="button" disabled title="请先输入描述">✨ 一键优化</button>
+                <textarea id="t3dPromptInput" rows="3" placeholder="描述想要的立体配饰，如：一朵立体的粉色樱花发饰，花瓣有层次，中心镶水钻...&#10;中文即可，AI 会自动转成专业英文 3D 描述"></textarea>
+            </div>
+            <div class="optimize-result-hint" id="t3dOptimizeHint" style="display:none">💡 已优化为专业英文 3D 描述，可继续编辑，或直接生成</div>
+
+            <!-- 质量档位 -->
+            <div class="t2-params" id="t3dParams" style="margin-top: 14px;">
+                <div class="t2-row">
+                    <span class="t2-label">质量</span>
+                    <div class="engine-toggle">
+                        <button type="button" class="t3d-preset engine-opt" data-pt="512" data-steps="12" data-tex="1024">快速<small>~10s</small></button>
+                        <button type="button" class="t3d-preset engine-opt active" data-pt="1024_cascade" data-steps="12" data-tex="2048">标准<small>~30s</small></button>
+                        <button type="button" class="t3d-preset engine-opt" data-pt="1536_cascade" data-steps="20" data-tex="4096">高清<small>~2min</small></button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="error-msg" id="t3dError"></div>
+
+            <div style="margin-top: 18px;">
+                <button class="t3d-generate-btn" id="t3dGenerateBtn" disabled>
+                    <span>🧊</span>
+                    <span>生成 3D 模型</span>
+                </button>
+            </div>
+
+            <!-- Loading -->
+            <div class="t3d-loading" id="t3dLoading">
+                <div class="spinner-3d"></div>
+                <div class="loading-3d-text">TRELLIS.2 文生 3D 生成中...</div>
+                <div class="loading-3d-status" id="t3dLoadingStatus">任务已提交...</div>
+                <div class="loading-3d-timer" id="t3dLoadingTimer">00:00</div>
+            </div>
+
+            <!-- Result -->
+            <div class="t3d-result" id="t3dResult">
+                <div class="result-3d-grid">
+                    <div class="result-3d-item">
+                        <div class="result-3d-label">概念图（AI 生成）</div>
+                        <div class="result-3d-preview">
+                            <img id="t3dPreviewImg" src="" alt="文生 3D 概念图">
+                        </div>
+                    </div>
+                    <div class="result-3d-item">
+                        <div class="result-3d-label">3D 模型（可旋转/缩放）</div>
+                        <div class="model-viewer-wrapper">
+                            <model-viewer
+                                id="t3dModelViewer"
+                                camera-controls
+                                touch-action="pan-y"
+                                auto-rotate
+                                shadow-intensity="1"
+                                environment-image="neutral"
+                                exposure="1"
+                                alt="文生 3D 配饰模型">
+                            </model-viewer>
+                        </div>
+                    </div>
+                </div>
+                <fieldset style="border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-top:20px">
+                    <legend>彩色 3MF 打印设置</legend>
+                    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
+                        <label>最多颜色数
+                            <select id="t3dColorCount">
+                                <option value="2">2 色</option>
+                                <option value="4" selected>4 色</option>
+                                <option value="8">8 色</option>
+                                <option value="16">16 色</option>
+                            </select>
+                        </label>
+                        <label>最长边（毫米）
+                            <input id="t3dSizeMm" type="number" min="1" max="300" step="0.1" value="10" style="width:80px">
+                        </label>
+                        <label>图案细节
+                            <select id="t3dRefinement">
+                                <option value="0">基础</option>
+                                <option value="1" selected>标准</option>
+                                <option value="2">精细（转换较慢）</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div id="t3dColorStatus" role="status" aria-live="polite" style="font-size:13px;margin-top:10px"></div>
+                </fieldset>
+                <div class="result-3d-actions">
+                    <a class="btn-3d-download" id="t3dDownloadGlbBtn" download="t3d-accessory.glb">
+                        <span>💾</span>
+                        <span>下载 GLB 模型</span>
+                    </a>
+                    <button class="btn-3d-download" id="t3dDownloadStlBtn">
+                        <span>🖨️</span>
+                        <span>下载 STL</span>
+                    </button>
+                    <button class="btn-3d-download" id="t3dDownload3mfBtn">
+                        <span>🖨️</span>
+                        <span>下载彩色 3MF</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -1226,6 +1498,33 @@
         let cropStartX = 0, cropStartY = 0;
         let isCropping = false;
         let croppedBase64 = null;
+
+        // 3D 引擎选择（hunyuan 默认 / trellis2 自建多卡服务）
+        let selectedEngine = 'hunyuan';
+        const trellisParams = document.getElementById('trellisParams');
+        function updateEngineUI() {
+            if (trellisParams) trellisParams.style.display = (selectedEngine === 'trellis2') ? 'block' : 'none';
+        }
+        document.querySelectorAll('#engineSwitch .engine-opt').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('#engineSwitch .engine-opt').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                selectedEngine = btn.dataset.engine;
+                updateEngineUI();
+            });
+        });
+        // 质量档位 preset → 联动高级参数
+        document.querySelectorAll('#trellisParams .t2-preset').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('#trellisParams .t2-preset').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const p = document.getElementById('t2Pipeline'), s = document.getElementById('t2Steps'), t = document.getElementById('t2Texture');
+                if (p) p.value = btn.dataset.pt;
+                if (s) s.value = btn.dataset.steps;
+                if (t) t.value = btn.dataset.tex;
+            });
+        });
+        updateEngineUI();
         let pollTimer = null;
         let timerInterval = null;
         let timerSeconds = 0;
@@ -1460,7 +1759,15 @@
                 const resp = await fetch('/api/generate-3d', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ image: croppedBase64 }),
+                    body: JSON.stringify(Object.assign(
+                        { image: croppedBase64, engine: selectedEngine },
+                        selectedEngine === 'trellis2' ? {
+                            pipeline_type: (document.getElementById('t2Pipeline') || {}).value,
+                            steps: Number((document.getElementById('t2Steps') || {}).value) || undefined,
+                            texture_size: Number((document.getElementById('t2Texture') || {}).value) || undefined,
+                            seed: Number((document.getElementById('t2Seed') || {}).value) || undefined
+                        } : {}
+                    )),
                 });
 
                 if (!resp.ok) {
@@ -1541,7 +1848,7 @@
                         'processing': '模型生成中...',
                     };
                     loading3dStatus.textContent = statusMap[status] || `状态：${status}`;
-                    pollTimer = setTimeout(doPoll, 10000);
+                    pollTimer = setTimeout(doPoll, 3000);
                 } catch (err) {
                     retryCount++;
                     if (retryCount <= maxRetries) {
@@ -1563,6 +1870,12 @@
 
         function show3dResult(data) {
             result3d.classList.add('visible');
+            document.getElementById('colorExportStatus').replaceChildren();
+            currentGlbUrl = data.glb_url || null;
+            if (!currentGlbUrl) {
+                modelViewer.removeAttribute('src');
+                downloadGlbBtn.removeAttribute('href');
+            }
 
             // Preview image
             if (data.preview_url) {
@@ -1580,40 +1893,49 @@
         }
 
         // --- Format conversion download (STL / 3MF) ---
-        async function downloadConverted(glbUrl, format, btn) {
+        async function downloadConverted(glbUrl, format, btn, ui) {
             if (!glbUrl) {
                 alert('GLB 模型地址不可用，请重新生成');
                 return;
             }
+            // ui 可选：另一套 3MF 设置控件（文生3D 区块复用）；缺省用图生3D 区块控件
+            ui = ui || {};
+            const printSize = ui.sizeMm || document.getElementById('printSizeMm');
+            const status = ui.status || document.getElementById('colorExportStatus');
+            const viewer = ui.viewer || modelViewer;
+            if (format === '3mf' && (!printSize.reportValidity() || !printSize.value)) return;
+            const options = format === '3mf' ? {
+                color_count: Number((ui.colorCount || document.getElementById('printColorCount')).value),
+                refinement: Number((ui.refinement || document.getElementById('printRefinement')).value),
+                size_mm: Number(printSize.value),
+            } : {};
+            if (format === '3mf') status.textContent = '正在读取模型颜色…';
             const originalText = btn.innerHTML;
             btn.classList.add('downloading');
             btn.disabled = true;
             btn.innerHTML = `<span>⏳</span><span>转换中...</span>`;
 
             try {
-                // 前端先下载 GLB（因为 Cowork Pod 访问不了腾讯 CDN）
-                // 优先用 model-viewer 已加载的 GLB（避开 CORS），失败后 fallback 到直接 fetch
+                // Prefer the original GLB so the viewer cannot alter its materials.
                 btn.innerHTML = `<span>⏳</span><span>提取模型中...</span>`;
                 let glbBlob = null;
 
-                // 尝试 1: 从已加载的 model-viewer 导出
-                if (modelViewer && typeof modelViewer.exportScene === 'function') {
-                    try {
-                        glbBlob = await modelViewer.exportScene({binary: true});
-                    } catch (e) {
-                        console.warn('exportScene 失败，尝试直接下载:', e);
-                    }
-                }
-
-                // 尝试 2: fallback 到 fetch（可能被 CORS 拦）
-                if (!glbBlob) {
+                try {
                     btn.innerHTML = `<span>⏳</span><span>下载模型中...</span>`;
                     const glbResp = await fetch(glbUrl);
                     if (!glbResp.ok) {
                         throw new Error(`下载 GLB 失败: HTTP ${glbResp.status}`);
                     }
                     glbBlob = await glbResp.blob();
+                } catch (downloadError) {
+                    // Only export a viewer that has finished loading this model.
+                    if (!viewer.loaded || viewer.src !== glbUrl || typeof viewer.exportScene !== 'function') {
+                        throw new Error('原始 GLB 下载失败，请等待模型加载完成后重试');
+                    }
+                    glbBlob = await viewer.exportScene({binary: true});
+                    if (format === '3mf') status.textContent = '原文件下载失败，正在使用已加载模型转换。';
                 }
+                if (glbBlob.size > 50 * 1024 * 1024) throw new Error('GLB 文件不能超过 50MB');
 
                 // 转 base64
                 const glbBase64 = await new Promise((resolve, reject) => {
@@ -1627,7 +1949,7 @@
                 const resp = await fetch('/api/convert-format', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ glb_base64: glbBase64, format: format }),
+                    body: JSON.stringify({ glb_base64: glbBase64, format: format, ...options }),
                 });
 
                 if (!resp.ok) {
@@ -1636,16 +1958,36 @@
                 }
 
                 const blob = await resp.blob();
+                if (format === '3mf') {
+                    const palette = (resp.headers.get('X-Color-Palette') || '').split(',').filter(Boolean);
+                    const warnings = JSON.parse(resp.headers.get('X-Conversion-Warnings') || '[]');
+                    status.replaceChildren();
+                    const summary = document.createElement('p');
+                    summary.textContent = `已导出 ${palette.length} 色，尺寸 ${resp.headers.get('X-Model-Size-Mm')} mm。请在 Bambu Studio 中确认耗材映射。`;
+                    status.appendChild(summary);
+                    palette.forEach((color, index) => {
+                        if (!/^#[0-9A-F]{6}$/i.test(color)) return;
+                        const swatch = document.createElement('span');
+                        swatch.style.cssText = `display:inline-block;background:${color};width:20px;height:20px;border:1px solid #999;border-radius:4px;margin:8px 6px 0 0`;
+                        swatch.title = `耗材 ${index + 1}：${color}`;
+                        swatch.setAttribute('aria-label', swatch.title);
+                        status.appendChild(swatch);
+                    });
+                    const note = document.createElement('p');
+                    note.textContent = warnings.join(' ');
+                    status.appendChild(note);
+                }
                 const ext = format === '3mf' ? '3mf' : 'stl';
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `accessory-3d.${ext}`;
+                a.download = format === '3mf' ? 'accessory-color.3mf' : `accessory-3d.${ext}`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
             } catch (err) {
+                if (format === '3mf') status.textContent = `转换失败：${err.message}`;
                 alert(`转换失败：${err.message}`);
             } finally {
                 btn.classList.remove('downloading');
@@ -1671,6 +2013,184 @@
             croppedBase64 = null;
             generate3dBtn.disabled = false;
             error3d.classList.remove('visible');
+        });
+
+        // ===== Text-to-3D Logic（文字直生 3D 配饰）=====
+        const t3dPromptInput = document.getElementById('t3dPromptInput');
+        const t3dOptimizeBtn = document.getElementById('t3dOptimizeBtn');
+        const t3dOptimizeHint = document.getElementById('t3dOptimizeHint');
+        const t3dGenerateBtn = document.getElementById('t3dGenerateBtn');
+        const t3dLoading = document.getElementById('t3dLoading');
+        const t3dLoadingStatus = document.getElementById('t3dLoadingStatus');
+        const t3dLoadingTimer = document.getElementById('t3dLoadingTimer');
+        const t3dError = document.getElementById('t3dError');
+        const t3dResult = document.getElementById('t3dResult');
+        const t3dModelViewer = document.getElementById('t3dModelViewer');
+        const t3dDownloadGlbBtn = document.getElementById('t3dDownloadGlbBtn');
+        const t3dDownloadStlBtn = document.getElementById('t3dDownloadStlBtn');
+        const t3dDownload3mfBtn = document.getElementById('t3dDownload3mfBtn');
+
+        let t3dParams = { pipeline_type: '1024_cascade', steps: '12', texture_size: '2048' };
+        let t3dCurrentGlbUrl = null;
+        let t3dTimerInterval = null;
+        let t3dPollAbort = null;
+
+        function t3dUpdateButtonState() {
+            const has = t3dPromptInput.value.trim().length > 0;
+            t3dOptimizeBtn.disabled = !has;
+            t3dGenerateBtn.disabled = !has;
+        }
+        t3dPromptInput.addEventListener('input', () => {
+            t3dOptimizeHint.style.display = 'none';
+            t3dUpdateButtonState();
+        });
+
+        // 质量档位
+        document.querySelectorAll('.t3d-preset').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.t3d-preset').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                t3dParams = { pipeline_type: btn.dataset.pt, steps: btn.dataset.steps, texture_size: btn.dataset.tex };
+            });
+        });
+
+        function t3dShowError(msg) {
+            t3dError.textContent = msg;
+            t3dError.classList.add('visible');
+        }
+        function t3dHideError() { t3dError.classList.remove('visible'); }
+
+        // 一键优化（target=3d：中文描述 → 英文 3D prompt）
+        t3dOptimizeBtn.addEventListener('click', async () => {
+            const desc = t3dPromptInput.value.trim();
+            if (!desc) return;
+            t3dHideError();
+            t3dOptimizeHint.style.display = 'none';
+            const original = t3dOptimizeBtn.innerHTML;
+            t3dOptimizeBtn.disabled = true;
+            t3dOptimizeBtn.innerHTML = '⏳ 优化中...';
+            try {
+                const fd = new FormData();
+                fd.append('style', desc);
+                fd.append('target', '3d');
+                const resp = await fetch('/api/optimize-prompt', { method: 'POST', body: fd });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || resp.statusText);
+                }
+                const data = await resp.json();
+                t3dPromptInput.value = data.prompt;
+                t3dOptimizeHint.style.display = 'block';
+            } catch (err) {
+                t3dShowError('优化失败：' + (err.message || '未知错误'));
+            } finally {
+                t3dOptimizeBtn.innerHTML = original;
+                t3dUpdateButtonState();
+            }
+        });
+
+        // 生成：提交 + 轮询（复用 /api/check-3d）
+        t3dGenerateBtn.addEventListener('click', async () => {
+            const prompt = t3dPromptInput.value.trim();
+            if (!prompt) return;
+            t3dHideError();
+            t3dResult.classList.remove('visible');
+            t3dLoading.classList.add('visible');
+            t3dGenerateBtn.disabled = true;
+            t3dLoadingStatus.textContent = '任务已提交...';
+
+            const t0 = Date.now();
+            if (t3dTimerInterval) clearInterval(t3dTimerInterval);
+            t3dTimerInterval = setInterval(() => {
+                const s = Math.floor((Date.now() - t0) / 1000);
+                t3dLoadingTimer.textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+            }, 1000);
+
+            try {
+                const resp = await fetch('/api/generate-3d-text', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt, ...t3dParams }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || resp.statusText);
+                }
+                const data = await resp.json();
+                t3dStartPolling(data.task_id);
+            } catch (err) {
+                t3dStopLoading();
+                t3dShowError('提交失败：' + (err.message || '未知错误'));
+            }
+        });
+
+        function t3dStopLoading() {
+            t3dLoading.classList.remove('visible');
+            if (t3dTimerInterval) { clearInterval(t3dTimerInterval); t3dTimerInterval = null; }
+            t3dUpdateButtonState();
+        }
+
+        function t3dStartPolling(taskId) {
+            if (t3dPollAbort) t3dPollAbort.abort();
+            t3dPollAbort = new AbortController();
+            const doPoll = async () => {
+                try {
+                    const resp = await fetch(`/api/check-3d?task_id=${encodeURIComponent(taskId)}`, {
+                        credentials: 'same-origin', signal: t3dPollAbort.signal,
+                    });
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    const data = await resp.json();
+                    if (data.status === 'completed') {
+                        t3dStopLoading();
+                        t3dShowResult(data);
+                        return;
+                    }
+                    if (data.status === 'failed') {
+                        t3dStopLoading();
+                        t3dShowError('生成失败：' + (data.error || '未知错误'));
+                        return;
+                    }
+                    t3dLoadingStatus.textContent = data.stage || (data.status === 'in_progress' ? 'TRELLIS.2 生成中，请稍候...' : (data.status || '排队中...'));
+                    setTimeout(doPoll, 3000);
+                } catch (err) {
+                    if (err.name === 'AbortError') return;
+                    t3dStopLoading();
+                    t3dShowError('查询任务状态失败：' + (err.message || '未知错误'));
+                }
+            };
+            doPoll();
+        }
+
+        function t3dShowResult(data) {
+            t3dCurrentGlbUrl = data.glb_url || null;
+            document.getElementById('t3dColorStatus').replaceChildren();
+            const t3dPreviewImg = document.getElementById('t3dPreviewImg');
+            if (data.preview_url) {
+                t3dPreviewImg.src = data.preview_url;
+            } else {
+                t3dPreviewImg.src = '';
+            }
+            if (t3dCurrentGlbUrl) {
+                t3dModelViewer.src = t3dCurrentGlbUrl;
+                t3dDownloadGlbBtn.href = t3dCurrentGlbUrl;
+            }
+            t3dResult.classList.add('visible');
+            t3dResult.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // 文生3D 下载（STL / 彩色 3MF，复用转换接口）
+        const t3dConvertUi = {
+            sizeMm: document.getElementById('t3dSizeMm'),
+            colorCount: document.getElementById('t3dColorCount'),
+            refinement: document.getElementById('t3dRefinement'),
+            status: document.getElementById('t3dColorStatus'),
+            viewer: t3dModelViewer,
+        };
+        t3dDownloadStlBtn.addEventListener('click', () => {
+            downloadConverted(t3dCurrentGlbUrl, 'stl', t3dDownloadStlBtn, t3dConvertUi);
+        });
+        t3dDownload3mfBtn.addEventListener('click', () => {
+            downloadConverted(t3dCurrentGlbUrl, '3mf', t3dDownload3mfBtn, t3dConvertUi);
         });
     </script>
 </body>
