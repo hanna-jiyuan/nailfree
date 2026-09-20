@@ -132,6 +132,115 @@
         }
         .remove-btn:hover { transform: scale(1.1); }
 
+        /* Reference Upload Area */
+        .ref-upload-area {
+            margin-top: 16px;
+            border: 2px dashed #e5d0ec;
+            border-radius: 14px;
+            padding: 14px 18px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: rgba(253, 241, 250, 0.5);
+        }
+        .ref-upload-area:hover, .ref-upload-area.dragover {
+            border-color: #ec4899;
+            background: rgba(236, 72, 153, 0.05);
+        }
+        .ref-placeholder {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .ref-icon { font-size: 28px; }
+        .ref-text { flex: 1; }
+        .ref-title { font-size: 14px; color: #374151; margin-bottom: 2px; }
+        .ref-hint { font-size: 12px; color: #9ca3af; line-height: 1.5; }
+        .ref-add-btn {
+            flex-shrink: 0;
+            padding: 8px 16px;
+            border-radius: 10px;
+            background: rgba(168, 85, 247, 0.1);
+            color: #a855f7;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .ref-upload-area:hover .ref-add-btn { background: rgba(168, 85, 247, 0.18); }
+        .ref-preview-box {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .ref-preview-frame {
+            position: relative;
+            flex-shrink: 0;
+        }
+        .ref-preview-img {
+            width: 72px;
+            height: 72px;
+            object-fit: cover;
+            border-radius: 10px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.12);
+            display: block;
+        }
+        .ref-preview-frame .remove-btn {
+            top: -7px;
+            right: -7px;
+            width: 22px;
+            height: 22px;
+            font-size: 11px;
+        }
+        .ref-meta { flex: 1; }
+        .ref-meta-title { font-size: 13px; color: #374151; font-weight: 600; margin-bottom: 2px; }
+
+        /* Optimize Button */
+        .style-input-wrapper label .optimize-tip {
+            font-size: 12px;
+            color: #9ca3af;
+            font-weight: 400;
+            margin-left: 4px;
+        }
+        @media (max-width: 640px) {
+            .style-input-wrapper label .optimize-tip { display: none; }
+        }
+        .optimize-btn {
+            position: absolute;
+            right: 10px;
+            top: 6px;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 14px;
+            border: none;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #ec4899, #a855f7);
+            color: white;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s;
+            box-shadow: 0 3px 10px rgba(168, 85, 247, 0.3);
+            z-index: 2;
+        }
+        .optimize-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 5px 14px rgba(168, 85, 247, 0.4);
+        }
+        .optimize-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        .optimize-btn:disabled:hover { transform: none; }
+        .optimize-result-hint {
+            margin-top: 8px;
+            font-size: 12.5px;
+            color: #7c3aed;
+            background: rgba(168, 85, 247, 0.08);
+            border-radius: 8px;
+            padding: 7px 12px;
+        }
+
         /* Input */
         .style-input-wrapper {
             margin-top: 4px;
@@ -632,10 +741,35 @@
                 </div>
             </div>
 
+            <!-- Reference Image Upload (optional) -->
+            <input type="file" id="refFileInput" accept="image/jpeg,image/png,image/webp" style="display:none">
+            <div class="ref-upload-area" id="refUploadArea">
+                <div id="refPlaceholder" class="ref-placeholder">
+                    <span class="ref-icon">🖼️</span>
+                    <div class="ref-text">
+                        <div class="ref-title"><strong>参考图（可选）</strong></div>
+                        <div class="ref-hint">上传喜欢的美甲款式图，AI 会参考它设计；描述里可写修改细节（如“换成蓝色”）</div>
+                    </div>
+                    <span class="ref-add-btn">＋ 上传</span>
+                </div>
+                <div id="refPreviewBox" class="ref-preview-box" style="display:none">
+                    <div class="ref-preview-frame">
+                        <img id="refPreviewImg" class="ref-preview-img" src="" alt="参考图">
+                        <button class="remove-btn" id="refRemoveBtn" title="移除参考图">✕</button>
+                    </div>
+                    <div class="ref-meta">
+                        <div class="ref-meta-title">🖼️ 参考图已上传</div>
+                        <div class="ref-hint">AI 会参考这张图设计美甲；点击图片可替换</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Style Input -->
-            <div class="style-input-wrapper" style="margin-top: 24px;">
-                <label><span class="emoji">✨</span>美甲风格描述</label>
-                <textarea class="style-input" id="styleInput" rows="3" placeholder="描述你想要的美甲风格，如：法式猫眼美甲、冰透仙女风、复古油画风、极简法式白边..."></textarea>
+            <div class="style-input-wrapper" style="margin-top: 24px; position: relative;">
+                <label><span class="emoji">✨</span>美甲风格描述 <span class="optimize-tip">写好想法后可一键优化成专业描述</span></label>
+                <button class="optimize-btn" id="optimizeBtn" type="button" disabled title="请先输入描述或上传参考图">✨ 一键优化</button>
+                <textarea class="style-input" id="styleInput" rows="4" placeholder="描述你想要的美甲风格，如：法式猫眼美甲、冰透仙女风、复古油画风、极简法式白边...&#10;上传参考图后，描述可以只写修改细节，如：底色换成雾霾蓝，去掉钻饰"></textarea>
+                <div class="optimize-result-hint" id="optimizeResultHint" style="display:none">💡 已优化为专业描述，可继续手动编辑，或直接生成</div>
                 <div class="style-presets">
                     <span class="preset-tag" data-style="法式白色猫眼美甲，优雅知性，光泽细腻">法式猫眼 ✨</span>
                     <span class="preset-tag" data-style="冰透粉色仙女风美甲，透明感强，镶嵌小珍珠和水钻">冰透仙女风 🧚</span>
@@ -801,6 +935,116 @@
         let originalPreviewUrl = null;
         let generatedImageUrl = null;
 
+        // --- Reference Image Logic ---
+        const refFileInput = document.getElementById('refFileInput');
+        const refUploadArea = document.getElementById('refUploadArea');
+        const refPlaceholder = document.getElementById('refPlaceholder');
+        const refPreviewBox = document.getElementById('refPreviewBox');
+        const refPreviewImg = document.getElementById('refPreviewImg');
+        const refRemoveBtn = document.getElementById('refRemoveBtn');
+        const optimizeBtn = document.getElementById('optimizeBtn');
+        const optimizeResultHint = document.getElementById('optimizeResultHint');
+
+        let refFile = null;
+
+        refUploadArea.addEventListener('click', (e) => {
+            if (e.target === refRemoveBtn || refRemoveBtn.contains(e.target)) return;
+            refFileInput.click();
+        });
+        refUploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            refUploadArea.classList.add('dragover');
+        });
+        refUploadArea.addEventListener('dragleave', () => {
+            refUploadArea.classList.remove('dragover');
+        });
+        refUploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            refUploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) handleRefFile(files[0]);
+        });
+        refFileInput.addEventListener('change', () => {
+            if (refFileInput.files.length > 0) handleRefFile(refFileInput.files[0]);
+        });
+        refRemoveBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            clearRefFile();
+        });
+
+        function handleRefFile(file) {
+            const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+            if (!validTypes.includes(file.type)) {
+                showError('参考图请选择 JPEG、PNG 或 WebP 格式');
+                return;
+            }
+            if (file.size > 5 * 1024 * 1024) {
+                showError('参考图大小不能超过 5MB');
+                return;
+            }
+            hideError();
+            refFile = file;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                refPreviewImg.src = e.target.result;
+                refPlaceholder.style.display = 'none';
+                refPreviewBox.style.display = 'flex';
+            };
+            reader.readAsDataURL(file);
+            updateButtonState();
+        }
+
+        function clearRefFile() {
+            refFile = null;
+            refFileInput.value = '';
+            refPreviewImg.src = '';
+            refPlaceholder.style.display = 'flex';
+            refPreviewBox.style.display = 'none';
+            updateButtonState();
+        }
+
+        // --- Optimize Prompt (一键优化) ---
+        optimizeBtn.addEventListener('click', async () => {
+            const desc = styleInput.value.trim();
+            if (!desc && !refFile) return;
+
+            hideError();
+            optimizeResultHint.style.display = 'none';
+            const originalBtnHTML = optimizeBtn.innerHTML;
+            optimizeBtn.disabled = true;
+            optimizeBtn.innerHTML = '⏳ 优化中...';
+
+            const formData = new FormData();
+            if (desc) formData.append('style', desc);
+            if (refFile) formData.append('reference', refFile);
+
+            try {
+                const resp = await fetch('/api/optimize-prompt', {
+                    method: 'POST',
+                    body: formData,
+                });
+                if (!resp.ok) {
+                    let detail = '';
+                    try {
+                        const errData = await resp.json();
+                        detail = errData.detail || resp.statusText;
+                    } catch {
+                        detail = resp.statusText;
+                    }
+                    throw new Error(detail);
+                }
+                const data = await resp.json();
+                styleInput.value = data.prompt;
+                optimizeResultHint.style.display = 'block';
+                updateButtonState();
+            } catch (err) {
+                showError('优化失败：' + (err.message || '未知错误') + '。请重试。');
+            } finally {
+                optimizeBtn.innerHTML = originalBtnHTML;
+                updateButtonState();
+            }
+        });
+
         // --- Upload Logic ---
         uploadArea.addEventListener('click', (e) => {
             if (e.target === removeBtn || removeBtn.contains(e.target)) return;
@@ -874,10 +1118,15 @@
             });
         });
 
-        styleInput.addEventListener('input', updateButtonState);
+        styleInput.addEventListener('input', () => {
+            optimizeResultHint.style.display = 'none';
+            updateButtonState();
+        });
 
         function updateButtonState() {
-            generateBtn.disabled = !(selectedFile && styleInput.value.trim().length > 0);
+            const hasInput = styleInput.value.trim().length > 0 || refFile;
+            generateBtn.disabled = !(selectedFile && hasInput);
+            optimizeBtn.disabled = !hasInput;
         }
 
         // --- Generate ---
@@ -888,7 +1137,7 @@
         });
 
         async function generate() {
-            if (!selectedFile || !styleInput.value.trim()) return;
+            if (!selectedFile || !(styleInput.value.trim() || refFile)) return;
 
             hideError();
             resultSection.classList.remove('visible');
@@ -897,7 +1146,8 @@
 
             const formData = new FormData();
             formData.append('image', selectedFile);
-            formData.append('style', styleInput.value.trim());
+            if (styleInput.value.trim()) formData.append('style', styleInput.value.trim());
+            if (refFile) formData.append('reference', refFile);
 
             try {
                 const resp = await fetch('/api/generate', {

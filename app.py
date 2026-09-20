@@ -65,6 +65,143 @@ def _load_rai_api_key() -> str:
 app = FastAPI(title="NailFree - AI 美甲试穿")
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 
+# ===== 文字需求转设计描述（Prompt 优化）=====
+
+RAI_CHAT_URL = "https://maas.devops.xiaohongshu.com/openai/v1/chat/completions"
+CHAT_MODEL = "qwen3.7-plus"
+
+_OPTIMIZE_BASE = (
+    "你是一位资深美甲设计师，擅长把用户的想法转化为专业、具体、可直接用于 AI 图像生成的"
+    "美甲设计描述。你的输出将被用作图像生成模型的提示词，在用户的手部照片上渲染美甲效果。"
+)
+
+# 四种输入情况的 system prompt（有/无参考图 × 有/无描述词）
+OPTIMIZE_SYSTEM_PROMPTS = {
+    # 有参考图 + 有描述词：分析参考图 + 应用用户修改
+    "ref+desc": (
+        _OPTIMIZE_BASE
+        + "\n本次任务：用户会上传一张美甲参考图，并给出修改要求。请：\n"
+        "1. 仔细观察参考图，提取关键设计信息：底色与配色、图案主题、装饰元素（花朵/线条/钻饰/亮片等）、"
+        "图案在指甲上的布局、甲型、质感光泽（哑光/亮面/猫眼/渐变/立体）。\n"
+        "2. 将用户的修改要求精确应用到该设计上：用户要求改动的细节必须改，用户未提及的部分必须保持参考图原样。\n"
+        "3. 严禁凭空添加参考图与用户要求中都不存在的元素。\n"
+        "输出要求：一段 80~180 字的中文设计描述，涵盖整体风格、颜色、图案元素、质感与装饰细节；"
+        "只输出描述正文，不要标题、编号、引号或 markdown 格式。"
+    ),
+    # 有参考图 + 无描述词：忠实还原参考图
+    "ref-only": (
+        _OPTIMIZE_BASE
+        + "\n本次任务：用户上传了一张美甲参考图，未附加任何说明，希望复刻该设计。"
+        "请忠实还原参考图，输出一段 80~180 字的中文设计描述，具体到 AI 图像生成模型可以直接据其还原该款式："
+        "底色与配色、图案主题、装饰元素、布局、甲型、质感光泽。"
+        "只输出描述正文，不要标题、编号、引号或 markdown 格式。"
+    ),
+    # 无参考图 + 有描述词：扩写为专业设计描述
+    "desc-only": (
+        _OPTIMIZE_BASE
+        + "\n本次任务：用户没有参考图，只有一句简短的美甲想法。请把它扩写成专业的设计描述：\n"
+        "1. 用户明确指定的元素（风格、颜色、图案、材质等）必须全部保留，不得替换或删除；\n"
+        "2. 合理补充细节：配色方案、图案在指甲上的布局、质感（哑光/亮面/渐变/猫眼/闪粉）、"
+        "装饰元素（钻饰/金属线/珍珠等）、整体氛围与适用场景；\n"
+        "3. 补充要克制，与用户原意风格一致，不喧宾夺主。\n"
+        "输出要求：一段 80~180 字的中文描述；只输出描述正文，不要标题、编号、引号或 markdown 格式。"
+    ),
+}
+
+
+def _validate_image(upload: UploadFile, image_bytes: bytes) -> str:
+    """校验图片类型与大小，返回 mime。"""
+    if upload.content_type not in ("image/jpeg", "image/png", "image/webp"):
+        raise HTTPException(400, "仅支持 JPEG/PNG/WebP 图片")
+    if len(image_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(400, "图片大小不能超过 5MB")
+    return upload.content_type or "image/jpeg"
+
+
+async def _call_chat_llm(system_prompt: str, user_content) -> str:
+    """调用 RAI 文本模型（qwen3.7-plus，支持视觉输入）。
+
+    user_content: 纯字符串，或 OpenAI 多模态 content 数组（text + image_url）。
+    """
+    api_key = _load_rai_api_key()
+    payload = {
+        "model": CHAT_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "max_tokens": 3000,  # 推理模型，需为 reasoning 留足空间
+        "temperature": 0.5,
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        try:
+            resp = await client.post(RAI_CHAT_URL, headers={"api-key": api_key}, json=payload)
+        except httpx.RequestError as e:
+            raise HTTPException(502, f"调用 AI 优化服务失败：{e}")
+    if resp.status_code != 200:
+        raise HTTPException(502, f"AI 优化服务返回错误：{resp.status_code} - {resp.text[:300]}")
+    try:
+        content = (resp.json()["choices"][0]["message"]["content"] or "").strip()
+    except (KeyError, IndexError, TypeError) as e:
+        raise HTTPException(502, f"解析 AI 优化响应失败：{e}")
+    if not content:
+        raise HTTPException(502, "AI 优化返回了空结果，请重试")
+    return content
+
+
+@app.post("/api/optimize-prompt")
+async def optimize_prompt(
+    style: Optional[str] = Form(None),
+    reference: Optional[UploadFile] = File(None),
+    decrypted_userinfo: Optional[str] = Header(None, alias="Decrypted-Userinfo"),
+):
+    """一键优化：把用户的文字需求 / 参考图转化为专业设计描述。
+
+    按输入内容分四种情况：
+    - 有参考图 + 有描述词 → 分析参考图 + 应用用户修改要求
+    - 有参考图 + 无描述词 → 忠实还原参考图
+    - 无参考图 + 有描述词 → 扩写为专业设计描述
+    - 无参考图 + 无描述词 → 400（无可优化内容）
+    """
+    _require_user(decrypted_userinfo)
+
+    style_text = (style or "").strip()[:2000]
+    has_desc = bool(style_text)
+
+    ref_bytes, ref_mime = None, None
+    if reference is not None and reference.filename:
+        ref_bytes = await reference.read()
+        ref_mime = _validate_image(reference, ref_bytes)
+    has_ref = ref_bytes is not None
+
+    if not has_ref and not has_desc:
+        raise HTTPException(400, "请先输入美甲描述或上传参考图，再使用一键优化")
+
+    if has_ref:
+        ref_b64 = base64.b64encode(ref_bytes).decode("ascii")
+        image_part = {
+            "type": "image_url",
+            "image_url": {"url": f"data:{ref_mime};base64,{ref_b64}"},
+        }
+        if has_desc:
+            case = "ref+desc"
+            user_content = [
+                {"type": "text", "text": f"参考图美甲设计如上。用户修改要求：{style_text}"},
+                image_part,
+            ]
+        else:
+            case = "ref-only"
+            user_content = [
+                {"type": "text", "text": "请复刻参考图中的美甲设计。"},
+                image_part,
+            ]
+    else:
+        case = "desc-only"
+        user_content = f"用户的美甲想法：{style_text}"
+
+    optimized = await _call_chat_llm(OPTIMIZE_SYSTEM_PROMPTS[case], user_content)
+    return JSONResponse({"prompt": optimized, "case": case})
+
 
 @app.get("/", response_class=HTMLResponse)
 def index(
@@ -83,25 +220,46 @@ def index(
 @app.post("/api/generate")
 async def generate_nail(
     image: UploadFile = File(...),
-    style: str = Form(...),
+    style: Optional[str] = Form(None),
+    reference: Optional[UploadFile] = File(None),
     decrypted_userinfo: Optional[str] = Header(None, alias="Decrypted-Userinfo"),
 ):
-    """调用 gpt-image-2 生成美甲效果图"""
+    """调用 gpt-image-2 生成美甲效果图（支持可选参考图）"""
     user = _require_user(decrypted_userinfo)
 
-    # 校验图片
-    if image.content_type not in ("image/jpeg", "image/png", "image/webp"):
-        raise HTTPException(400, "仅支持 JPEG/PNG/WebP 图片")
+    # 校验手部图片
     image_bytes = await image.read()
-    if len(image_bytes) > 5 * 1024 * 1024:
-        raise HTTPException(400, "图片大小不能超过 5MB")
+    mime = _validate_image(image, image_bytes)
 
-    # base64 编码
-    b64 = base64.b64encode(image_bytes).decode("ascii")
-    mime = image.content_type or "image/jpeg"
+    # 校验参考图（可选）
+    style_text = (style or "").strip()[:2000]
+    ref_bytes, ref_mime = None, None
+    if reference is not None and reference.filename:
+        ref_bytes = await reference.read()
+        ref_mime = _validate_image(reference, ref_bytes)
 
-    # 构造 prompt：把用户的风格描述 + 上下文说明
-    prompt = f"在这张手部照片上生成美甲效果。美甲风格要求：{style}。请保持手部姿势不变，只在指甲上应用描述的美甲设计，效果要自然逼真。"
+    if not style_text and ref_bytes is None:
+        raise HTTPException(400, "请填写风格描述或上传参考图")
+
+    # 构造 prompt + 输入图片：有参考图时走多图编辑模式
+    if ref_bytes is not None:
+        prompt = (
+            "第一张图是用户的手部照片，第二张图是美甲设计参考图。"
+            "请将参考图中的美甲设计精准应用到第一张图所有指甲上："
+            "保持手部姿势、手指形态、皮肤质感与背景完全不变，只改变指甲表面的美甲图案。"
+            + (f"设计要求：{style_text}。" if style_text else "")
+            + "效果自然逼真，美甲图案清晰精致。"
+        )
+        files = [
+            ("image[]", ("hand.jpg", image_bytes, mime)),
+            ("image[]", ("reference.jpg", ref_bytes, ref_mime)),
+        ]
+    else:
+        prompt = (
+            f"在这张手部照片上生成美甲效果。美甲风格要求：{style_text}。"
+            "请保持手部姿势不变，只在指甲上应用描述的美甲设计，效果要自然逼真。"
+        )
+        files = {"image": ("hand.jpg", image_bytes, mime)}
 
     # 调用 gpt-image-2 图片编辑 API
     api_key = _load_rai_api_key()
@@ -120,9 +278,7 @@ async def generate_nail(
                     "size": "1024x1024",
                     "quality": "medium",
                 },
-                files={
-                    "image": ("hand.jpg", image_bytes, mime),
-                },
+                files=files,
             )
         except httpx.RequestError as e:
             raise HTTPException(502, f"调用 AI 服务失败：{e}")
