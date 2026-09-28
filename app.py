@@ -279,34 +279,96 @@ def _prune_trellis_tasks(keep: int = 30):
             pass
 
 
-async def _run_trellis(task_id: str, image_bytes: bytes, preview_uri: str, params: dict = None):
-    """后台调用 TRELLIS.2 网关生成 GLB，落临时文件，结果写入 _trellis_tasks。
-    params 可含 pipeline_type/steps/texture_size/decimation_target/seed，透传给网关。"""
+async def _run_trellis_generations(
+    task_id: str,
+    text: str,
+    image_uri: str,
+    params: dict = None,
+    mode: str = "image",
+    preview_url: Optional[str] = None,
+):
+    """统一走 TRELLIS.2 /v1/images/generations（text+image），带重试并下载 GLB。"""
     params = params or {}
-    data = {"pipeline_type": params.get("pipeline_type") or TRELLIS2_PIPELINE_TYPE}
+    label = "文生" if mode == "text" else "图生"
+    data = {
+        "text": text,
+        "image": image_uri,
+        "pipeline_type": str(params.get("pipeline_type") or TRELLIS2_PIPELINE_TYPE),
+    }
     for _k in ("steps", "texture_size", "decimation_target", "seed"):
         _v = params.get(_k)
         if _v is not None and _v != "":
             data[_k] = str(_v)
+
+    resp = None
+    last_error = ""
+    backoff = [3, 5, 8, 12, 20]
+    for attempt in range(6):
+        _trellis_tasks[task_id]["stage"] = (
+            f"TRELLIS.2 {label} 3D 生成中..." if attempt == 0 else f"TRELLIS.2 重试中（{attempt + 1}/6）..."
+        )
+        try:
+            async with httpx.AsyncClient(timeout=TRELLIS2_TIMEOUT, trust_env=False) as client:
+                resp = await client.post(f"{TRELLIS2_BASE_URL}/v1/images/generations", json=data)
+        except Exception as e:  # noqa: BLE001
+            last_error = f"{type(e).__name__}: {e}"
+            logger.warning("trellis generations attempt %s failed: %s", attempt + 1, last_error)
+            resp = None
+        else:
+            if resp.status_code == 200:
+                break
+            last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+            logger.warning("trellis generations attempt %s returned %s", attempt + 1, last_error)
+        if attempt < len(backoff):
+            await asyncio.sleep(backoff[attempt])
+
+    if resp is None or resp.status_code != 200:
+        _trellis_tasks[task_id] = {
+            "status": "failed",
+            "error": f"TRELLIS {label}3D 错误：{last_error or '服务不可用'}",
+        }
+        return
+
     try:
-        # trust_env=False：走直连内网，不经业务代理
-        async with httpx.AsyncClient(timeout=TRELLIS2_TIMEOUT, trust_env=False) as client:
-            resp = await client.post(
-                f"{TRELLIS2_BASE_URL}/v1/images/to3d",
-                files={"image": ("accessory.png", image_bytes, "image/png")},
-                data=data,
-            )
-        await _finish_trellis_task(task_id, resp)
+        info = (resp.json().get("data") or [{}])[0]
     except Exception as e:  # noqa: BLE001
-        logger.exception("trellis task %s failed", task_id)
-        _trellis_tasks[task_id] = {"status": "failed", "error": f"调用 TRELLIS 失败：{e}"}
+        _trellis_tasks[task_id] = {"status": "failed", "error": f"TRELLIS 响应解析失败：{e}"}
+        return
+    glb_url = info.get("url")
+    if not glb_url:
+        _trellis_tasks[task_id] = {"status": "failed", "error": "TRELLIS 未返回 GLB 地址"}
+        return
+
+    async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
+        glb_resp = await client.get(glb_url)
+    if glb_resp.status_code != 200:
+        _trellis_tasks[task_id] = {"status": "failed", "error": f"GLB 下载失败 {glb_resp.status_code}"}
+        return
+
+    (_TRELLIS_DIR / f"{task_id}.glb").write_bytes(glb_resp.content)
+    _trellis_tasks[task_id] = {
+        "status": "completed",
+        "glb_url": f"/api/trellis-glb/{task_id}",
+        "preview_url": preview_url,
+        "num_vertices": info.get("num_vertices"),
+        "num_faces": info.get("num_faces"),
+        "engine": "trellis2",
+        "mode": mode,
+    }
+
+
+async def _run_trellis(task_id: str, image_bytes: bytes, preview_uri: str, params: dict = None):
+    """图生3D：参考图 → TRELLIS.2 generations（网关 /to3d 目前不稳定，统一走 generations）。"""
+    del image_bytes  # generations 直接吃 data URI；保留参数兼容调用方
+    text = (params or {}).get("text") or (
+        "Recreate the object in the reference image as a single high-quality 3D accessory, "
+        "preserving its shape, colors, materials and fine details."
+    )
+    await _run_trellis_generations(task_id, text, preview_uri, params, mode="image", preview_url=None)
 
 
 async def _run_trellis_text(task_id: str, prompt: str, params: dict = None):
-    """文生3D 管线：文字描述 → gpt-image-2 概念图 → TRELLIS.2 generations（text+image）→ GLB。
-
-    网关 generations 端点要求同时提供 text 与 image（图+文混合条件），
-    故先用 gpt-image-2 把文字渲染成白底产品图，再送入网关。"""
+    """文生3D 管线：文字描述 → gpt-image-2 概念图 → TRELLIS.2 generations（text+image）→ GLB。"""
     params = params or {}
     try:
         # 1) 文字 → 白底概念图（gpt-image-2）
@@ -347,50 +409,15 @@ async def _run_trellis_text(task_id: str, prompt: str, params: dict = None):
             return
         preview_uri = "data:image/jpeg;base64," + base64.b64encode(img_bytes).decode("ascii")
 
-        # 2) 概念图 + 文字 → TRELLIS.2 3D
-        _trellis_tasks[task_id]["stage"] = "TRELLIS.2 文生 3D 生成中..."
-        data = {
-            "text": prompt,
-            "image": preview_uri,
-            "pipeline_type": params.get("pipeline_type") or TRELLIS2_PIPELINE_TYPE,
-        }
-        for _k in ("steps", "texture_size", "decimation_target", "seed"):
-            _v = params.get(_k)
-            if _v is not None and _v != "":
-                data[_k] = _v
-        async with httpx.AsyncClient(timeout=TRELLIS2_TIMEOUT, trust_env=False) as client:
-            resp = await client.post(f"{TRELLIS2_BASE_URL}/v1/images/generations", json=data)
-        if resp.status_code != 200:
-            _trellis_tasks[task_id] = {
-                "status": "failed",
-                "error": f"TRELLIS 文生3D 错误 {resp.status_code}: {resp.text[:300]}",
-            }
-            return
-        glb_url = (resp.json().get("data") or [{}])[0].get("url")
-        if not glb_url:
-            _trellis_tasks[task_id] = {"status": "failed", "error": "TRELLIS 未返回 GLB 地址"}
-            return
-
-        # 3) 下载 GLB 落盘（浏览器不可直达网关，后端代理）
-        async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
-            glb_resp = await client.get(glb_url)
-        if glb_resp.status_code != 200:
-            _trellis_tasks[task_id] = {
-                "status": "failed",
-                "error": f"GLB 下载失败 {glb_resp.status_code}",
-            }
-            return
-        (_TRELLIS_DIR / f"{task_id}.glb").write_bytes(glb_resp.content)
-        info = (resp.json().get("data") or [{}])[0]
-        _trellis_tasks[task_id] = {
-            "status": "completed",
-            "glb_url": f"/api/trellis-glb/{task_id}",
-            "preview_url": preview_uri,
-            "num_vertices": info.get("num_vertices"),
-            "num_faces": info.get("num_faces"),
-            "engine": "trellis2",
-            "mode": "text",
-        }
+        # 2) 概念图 + 英文 prompt → TRELLIS.2 generations
+        await _run_trellis_generations(
+            task_id,
+            prompt,
+            preview_uri,
+            params,
+            mode="text",
+            preview_url=preview_uri,
+        )
     except Exception as e:  # noqa: BLE001
         logger.exception("trellis text task %s failed", task_id)
         _trellis_tasks[task_id] = {"status": "failed", "error": f"调用 TRELLIS 文生3D 失败：{e}"}
@@ -709,6 +736,26 @@ async def generate_3d(
     return JSONResponse({"task_id": task_id, "status": data.get("status", "queued")})
 
 
+def _has_cjk(text: str) -> bool:
+    """是否包含中文字符。TRELLIS generations 的 text 只接受英文，中文会触发网关 500。"""
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+async def _ensure_english_3d_prompt(prompt: str) -> str:
+    """文生3D 前置：把中文描述转成英文 3D prompt，避免 TRELLIS 500。"""
+    if not _has_cjk(prompt):
+        return prompt
+    optimized = await _call_chat_llm(
+        OPTIMIZE_3D_SYSTEM_PROMPTS["desc-only"],
+        f"用户的想法：{prompt}",
+    )
+    optimized = optimized.strip().strip('"').strip()
+    if not optimized:
+        raise HTTPException(502, "描述优化失败：AI 返回空结果")
+    logger.info("generate-3d-text: optimized Chinese prompt to English: %s", optimized[:160])
+    return optimized
+
+
 @app.post("/api/generate-3d-text")
 async def generate_3d_text(
     request: Request,
@@ -729,12 +776,21 @@ async def generate_3d_text(
     if not prompt:
         raise HTTPException(400, "请输入 3D 配饰描述")
 
+    # TRELLIS generations 的 text 必须为英文；中文输入先自动优化/翻译。
+    prompt = await _ensure_english_3d_prompt(prompt)
+
     params = {k: body.get(k) for k in ("pipeline_type", "steps", "texture_size", "decimation_target", "seed")}
     task_id = "t2-" + uuid.uuid4().hex
     _prune_trellis_tasks()
-    _trellis_tasks[task_id] = {"status": "in_progress", "engine": "trellis2", "mode": "text"}
+    _trellis_tasks[task_id] = {"status": "in_progress", "engine": "trellis2", "mode": "text", "prompt": prompt}
     _trellis_bg[task_id] = asyncio.create_task(_run_trellis_text(task_id, prompt, params))
-    return JSONResponse({"task_id": task_id, "status": "in_progress", "engine": "trellis2", "mode": "text"})
+    return JSONResponse({
+        "task_id": task_id,
+        "status": "in_progress",
+        "engine": "trellis2",
+        "mode": "text",
+        "optimized_prompt": prompt,
+    })
 
 
 @app.get("/api/check-3d")
