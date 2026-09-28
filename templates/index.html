@@ -831,7 +831,7 @@
                     <div class="upload-text">
                         <strong>点击上传</strong> 或拖拽手部照片到这里
                     </div>
-                    <div class="upload-hint">支持 JPEG / PNG / WebP，最大 5MB</div>
+                    <div class="upload-hint">用于生成美甲效果图；仅生成 3D 配饰时可不上传</div>
                 </div>
                 <div id="previewWrapper" class="preview-container" style="display:none">
                     <img id="previewImage" class="preview-image" src="" alt="preview">
@@ -864,10 +864,11 @@
 
             <!-- Style Input -->
             <div class="style-input-wrapper" style="margin-top: 24px; position: relative;">
-                <label><span class="emoji">✨</span>美甲风格描述 <span class="optimize-tip">写好想法后可一键优化成专业描述</span></label>
+                <label><span class="emoji">✨</span>美甲 / 配饰描述 <span class="optimize-tip">写好想法后可一键优化成专业描述</span></label>
                 <button class="optimize-btn" id="optimizeBtn" type="button" disabled title="请先输入描述或上传参考图">✨ 一键优化</button>
                 <textarea class="style-input" id="styleInput" rows="4" placeholder="描述你想要的美甲风格，如：法式猫眼美甲、冰透仙女风、复古油画风、极简法式白边...&#10;上传参考图后，描述可以只写修改细节，如：底色换成雾霾蓝，去掉钻饰"></textarea>
                 <div class="optimize-result-hint" id="optimizeResultHint" style="display:none">💡 已优化为专业描述，可继续手动编辑，或直接生成</div>
+                <p class="upload-hint" style="margin-top:10px">没有图片时，直接根据文字生成 3D 配饰；上传参考图时，直接根据参考图生成 3D；上传手部图时，生成美甲效果图后可框选配饰。</p>
                 <div class="style-presets">
                     <span class="preset-tag" data-style="法式白色猫眼美甲，优雅知性，光泽细腻">法式猫眼 ✨</span>
                     <span class="preset-tag" data-style="冰透粉色仙女风美甲，透明感强，镶嵌小珍珠和水钻">冰透仙女风 🧚</span>
@@ -889,6 +890,113 @@
                 </button>
             </div>
         </div>
+
+        <!-- ====== Text-to-3D Section ====== -->
+        <div class="card section-3d section-t3d" id="sectionT3d" style="margin-top: 28px;">
+            <div class="section-3d-title">🧊 3D 配饰生成</div>
+            <div class="section-3d-desc">上方填写描述即可直接生成；上传参考图则按参考图图生 3D。无需重复填写。</div>
+
+            <div class="t3d-input-row" style="display:none;">
+                <button class="t3d-optimize-btn" id="t3dOptimizeBtn" type="button" disabled title="请先输入描述">✨ 一键优化</button>
+                <textarea id="t3dPromptInput" rows="3" placeholder="描述想要的立体配饰，如：一朵立体的粉色樱花发饰，花瓣有层次，中心镶水钻...&#10;中文即可，AI 会自动转成专业英文 3D 描述"></textarea>
+            </div>
+            <div class="optimize-result-hint" id="t3dOptimizeHint" style="display:none">💡 已优化为专业英文 3D 描述，可继续编辑，或直接生成</div>
+
+            <!-- 质量档位 -->
+            <div class="t2-params" id="t3dParams" style="display:none;">
+                <div class="t2-row">
+                    <span class="t2-label">质量</span>
+                    <div class="engine-toggle">
+                        <button type="button" class="t3d-preset engine-opt" data-pt="512" data-steps="12" data-tex="1024">快速<small>~10s</small></button>
+                        <button type="button" class="t3d-preset engine-opt active" data-pt="1024_cascade" data-steps="12" data-tex="2048">标准<small>~30s</small></button>
+                        <button type="button" class="t3d-preset engine-opt" data-pt="1536_cascade" data-steps="20" data-tex="4096">高清<small>~2min</small></button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="error-msg" id="t3dError"></div>
+
+            <div style="display:none;">
+                <button class="t3d-generate-btn" id="t3dGenerateBtn" disabled>
+                    <span>🧊</span>
+                    <span>生成 3D 模型</span>
+                </button>
+            </div>
+
+            <!-- Loading -->
+            <div class="t3d-loading" id="t3dLoading">
+                <div class="spinner-3d"></div>
+                <div class="loading-3d-text">TRELLIS.2 文生 3D 生成中...</div>
+                <div class="loading-3d-status" id="t3dLoadingStatus">任务已提交...</div>
+                <div class="loading-3d-timer" id="t3dLoadingTimer">00:00</div>
+            </div>
+
+            <!-- Result -->
+            <div class="t3d-result" id="t3dResult">
+                <div class="result-3d-grid">
+                    <div class="result-3d-item">
+                        <div class="result-3d-label">概念图（AI 生成）</div>
+                        <div class="result-3d-preview">
+                            <img id="t3dPreviewImg" src="" alt="文生 3D 概念图">
+                        </div>
+                    </div>
+                    <div class="result-3d-item">
+                        <div class="result-3d-label">3D 模型（可旋转/缩放）</div>
+                        <div class="model-viewer-wrapper">
+                            <model-viewer
+                                id="t3dModelViewer"
+                                camera-controls
+                                touch-action="pan-y"
+                                auto-rotate
+                                shadow-intensity="1"
+                                environment-image="neutral"
+                                exposure="1"
+                                alt="文生 3D 配饰模型">
+                            </model-viewer>
+                        </div>
+                    </div>
+                </div>
+                <fieldset style="border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-top:20px">
+                    <legend>彩色 3MF 打印设置</legend>
+                    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
+                        <label>最多颜色数
+                            <select id="t3dColorCount">
+                                <option value="2">2 色</option>
+                                <option value="4" selected>4 色</option>
+                                <option value="8">8 色</option>
+                                <option value="16">16 色</option>
+                            </select>
+                        </label>
+                        <label>最长边（毫米）
+                            <input id="t3dSizeMm" type="number" min="1" max="300" step="0.1" value="10" style="width:80px">
+                        </label>
+                        <label>图案细节
+                            <select id="t3dRefinement">
+                                <option value="0">基础</option>
+                                <option value="1" selected>标准</option>
+                                <option value="2">精细（转换较慢）</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div id="t3dColorStatus" role="status" aria-live="polite" style="font-size:13px;margin-top:10px"></div>
+                </fieldset>
+                <div class="result-3d-actions">
+                    <a class="btn-3d-download" id="t3dDownloadGlbBtn" download="t3d-accessory.glb">
+                        <span>💾</span>
+                        <span>下载 GLB 模型</span>
+                    </a>
+                    <button class="btn-3d-download" id="t3dDownloadStlBtn">
+                        <span>🖨️</span>
+                        <span>下载 STL</span>
+                    </button>
+                    <button class="btn-3d-download" id="t3dDownload3mfBtn">
+                        <span>🖨️</span>
+                        <span>下载彩色 3MF</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
 
         <!-- Loading -->
         <div class="card" id="loadingCard" style="display:none">
@@ -1078,111 +1186,6 @@
             </div>
         </div>
 
-        <!-- ====== Text-to-3D Section ====== -->
-        <div class="card section-3d section-t3d visible" id="sectionT3d" style="margin-top: 28px;">
-            <div class="section-3d-title">🪄 文字直生 3D 配饰</div>
-            <div class="section-3d-desc">不需要手图和效果图，直接用文字描述生成可 3D 打印的立体配饰（TRELLIS.2 文生3D，自建 8×H20）</div>
-
-            <div class="t3d-input-row" style="margin-top: 18px;">
-                <button class="t3d-optimize-btn" id="t3dOptimizeBtn" type="button" disabled title="请先输入描述">✨ 一键优化</button>
-                <textarea id="t3dPromptInput" rows="3" placeholder="描述想要的立体配饰，如：一朵立体的粉色樱花发饰，花瓣有层次，中心镶水钻...&#10;中文即可，AI 会自动转成专业英文 3D 描述"></textarea>
-            </div>
-            <div class="optimize-result-hint" id="t3dOptimizeHint" style="display:none">💡 已优化为专业英文 3D 描述，可继续编辑，或直接生成</div>
-
-            <!-- 质量档位 -->
-            <div class="t2-params" id="t3dParams" style="margin-top: 14px;">
-                <div class="t2-row">
-                    <span class="t2-label">质量</span>
-                    <div class="engine-toggle">
-                        <button type="button" class="t3d-preset engine-opt" data-pt="512" data-steps="12" data-tex="1024">快速<small>~10s</small></button>
-                        <button type="button" class="t3d-preset engine-opt active" data-pt="1024_cascade" data-steps="12" data-tex="2048">标准<small>~30s</small></button>
-                        <button type="button" class="t3d-preset engine-opt" data-pt="1536_cascade" data-steps="20" data-tex="4096">高清<small>~2min</small></button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="error-msg" id="t3dError"></div>
-
-            <div style="margin-top: 18px;">
-                <button class="t3d-generate-btn" id="t3dGenerateBtn" disabled>
-                    <span>🧊</span>
-                    <span>生成 3D 模型</span>
-                </button>
-            </div>
-
-            <!-- Loading -->
-            <div class="t3d-loading" id="t3dLoading">
-                <div class="spinner-3d"></div>
-                <div class="loading-3d-text">TRELLIS.2 文生 3D 生成中...</div>
-                <div class="loading-3d-status" id="t3dLoadingStatus">任务已提交...</div>
-                <div class="loading-3d-timer" id="t3dLoadingTimer">00:00</div>
-            </div>
-
-            <!-- Result -->
-            <div class="t3d-result" id="t3dResult">
-                <div class="result-3d-grid">
-                    <div class="result-3d-item">
-                        <div class="result-3d-label">概念图（AI 生成）</div>
-                        <div class="result-3d-preview">
-                            <img id="t3dPreviewImg" src="" alt="文生 3D 概念图">
-                        </div>
-                    </div>
-                    <div class="result-3d-item">
-                        <div class="result-3d-label">3D 模型（可旋转/缩放）</div>
-                        <div class="model-viewer-wrapper">
-                            <model-viewer
-                                id="t3dModelViewer"
-                                camera-controls
-                                touch-action="pan-y"
-                                auto-rotate
-                                shadow-intensity="1"
-                                environment-image="neutral"
-                                exposure="1"
-                                alt="文生 3D 配饰模型">
-                            </model-viewer>
-                        </div>
-                    </div>
-                </div>
-                <fieldset style="border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-top:20px">
-                    <legend>彩色 3MF 打印设置</legend>
-                    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
-                        <label>最多颜色数
-                            <select id="t3dColorCount">
-                                <option value="2">2 色</option>
-                                <option value="4" selected>4 色</option>
-                                <option value="8">8 色</option>
-                                <option value="16">16 色</option>
-                            </select>
-                        </label>
-                        <label>最长边（毫米）
-                            <input id="t3dSizeMm" type="number" min="1" max="300" step="0.1" value="10" style="width:80px">
-                        </label>
-                        <label>图案细节
-                            <select id="t3dRefinement">
-                                <option value="0">基础</option>
-                                <option value="1" selected>标准</option>
-                                <option value="2">精细（转换较慢）</option>
-                            </select>
-                        </label>
-                    </div>
-                    <div id="t3dColorStatus" role="status" aria-live="polite" style="font-size:13px;margin-top:10px"></div>
-                </fieldset>
-                <div class="result-3d-actions">
-                    <a class="btn-3d-download" id="t3dDownloadGlbBtn" download="t3d-accessory.glb">
-                        <span>💾</span>
-                        <span>下载 GLB 模型</span>
-                    </a>
-                    <button class="btn-3d-download" id="t3dDownloadStlBtn">
-                        <span>🖨️</span>
-                        <span>下载 STL</span>
-                    </button>
-                    <button class="btn-3d-download" id="t3dDownload3mfBtn">
-                        <span>🖨️</span>
-                        <span>下载彩色 3MF</span>
-                    </button>
-                </div>
-            </div>
-        </div>
     </div>
 
     <script>
@@ -1289,6 +1292,8 @@
             const formData = new FormData();
             if (desc) formData.append('style', desc);
             if (refFile) formData.append('reference', refFile);
+            // 未上传手部图时，优化为独立 3D 配饰描述；有手部图则优化美甲效果图描述。
+            if (!selectedFile) formData.append('target', '3d');
 
             try {
                 const resp = await fetch('/api/optimize-prompt', {
@@ -1396,9 +1401,19 @@
         });
 
         function updateButtonState() {
-            const hasInput = styleInput.value.trim().length > 0 || refFile;
-            generateBtn.disabled = !(selectedFile && hasInput);
+            const hasText = styleInput.value.trim().length > 0;
+            const hasInput = hasText || refFile;
+            // 有手部图：美甲试穿；仅参考图：图生3D；只有文字：文生3D。
+            generateBtn.disabled = !(hasInput && (selectedFile || refFile || hasText));
             optimizeBtn.disabled = !hasInput;
+
+            if (selectedFile) {
+                generateBtn.innerHTML = '<span>🪄</span><span>生成效果图</span>';
+            } else if (refFile) {
+                generateBtn.innerHTML = '<span>🧊</span><span>根据参考图生成 3D</span>';
+            } else {
+                generateBtn.innerHTML = '<span>🧊</span><span>根据文字生成 3D</span>';
+            }
         }
 
         // --- Generate ---
@@ -1409,7 +1424,22 @@
         });
 
         async function generate() {
-            if (!selectedFile || !(styleInput.value.trim() || refFile)) return;
+            const description = styleInput.value.trim();
+            if (!(description || refFile)) return;
+
+            // 没有手部图时不再进入美甲效果图流程：参考图直接图生3D，纯文字直接文生3D。
+            if (!selectedFile) {
+                if (refFile) {
+                    await generateReferenceImage3d(refFile);
+                } else {
+                    t3dPromptInput.value = description;
+                    t3dUpdateButtonState();
+                    sectionT3d.classList.add('visible');
+                    sectionT3d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    t3dGenerateBtn.click();
+                }
+                return;
+            }
 
             hideError();
             resultSection.classList.remove('visible');
@@ -1418,7 +1448,7 @@
 
             const formData = new FormData();
             formData.append('image', selectedFile);
-            if (styleInput.value.trim()) formData.append('style', styleInput.value.trim());
+            if (description) formData.append('style', description);
             if (refFile) formData.append('reference', refFile);
 
             try {
@@ -1469,6 +1499,56 @@
             errorMsg.classList.remove('visible');
         }
 
+
+        async function generateReferenceImage3d(file) {
+            hideError();
+            generateBtn.disabled = true;
+            section3d.classList.add('visible');
+            cropWorkspace.classList.remove('visible');
+            result3d.classList.remove('visible');
+            error3d.classList.remove('visible');
+            loading3d.classList.add('visible');
+            loading3dStatus.textContent = '正在根据参考图提交 3D 任务...';
+            timerSeconds = 0;
+            updateTimerDisplay();
+            timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); }, 1000);
+
+            try {
+                const image = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(new Error('读取参考图失败'));
+                    reader.readAsDataURL(file);
+                });
+                // 参考图作为图生3D输入，固定使用 TRELLIS.2；纯文字则走文生3D管线。
+                const resp = await fetch('/api/generate-3d', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        image,
+                        engine: 'trellis2',
+                        pipeline_type: '1024_cascade',
+                        steps: 12,
+                        texture_size: 2048,
+                    }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || resp.statusText);
+                }
+                const data = await resp.json();
+                loading3dStatus.textContent = '任务排队中...';
+                section3d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                startPolling(data.task_id);
+            } catch (err) {
+                stopTimer();
+                loading3d.classList.remove('visible');
+                error3d.textContent = '❌ 提交失败：' + (err.message || '未知错误');
+                error3d.classList.add('visible');
+                generateBtn.disabled = false;
+                updateButtonState();
+            }
+        }
 
         // ===== 3D Accessory Generation Logic =====
         const section3d = document.getElementById('section3d');
@@ -2016,6 +2096,7 @@
         });
 
         // ===== Text-to-3D Logic（文字直生 3D 配饰）=====
+        const sectionT3d = document.getElementById('sectionT3d');
         const t3dPromptInput = document.getElementById('t3dPromptInput');
         const t3dOptimizeBtn = document.getElementById('t3dOptimizeBtn');
         const t3dOptimizeHint = document.getElementById('t3dOptimizeHint');
