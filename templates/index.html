@@ -802,6 +802,71 @@
         }
         .error-3d.visible { display: block; }
 
+        /* Try-on sticker overlay + accessory pool */
+        .tryon-stage { position: relative; display: inline-block; }
+        .tryon-overlay { position: absolute; inset: 0; pointer-events: none; }
+        .tryon-sticker {
+            position: absolute;
+            transform-origin: center;
+            pointer-events: auto;
+            cursor: grab;
+            user-select: none;
+            touch-action: none;
+            font-size: 44px;
+            line-height: 1;
+            filter: drop-shadow(0 4px 10px rgba(0,0,0,0.28));
+        }
+        .tryon-sticker.selected { outline: 2px dashed #8b5cf6; border-radius: 12px; }
+        .accessory-pool { margin-top: 18px; }
+        .accessory-pool-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: #374151;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .accessory-pool-title span { font-size: 12px; color: #9ca3af; font-weight: 500; }
+        .accessory-scroll {
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+            padding: 4px 2px 10px;
+        }
+        .accessory-card {
+            min-width: 78px;
+            border: 1px dashed rgba(139, 92, 246, 0.35);
+            border-radius: 14px;
+            padding: 10px 8px;
+            text-align: center;
+            background: rgba(255,255,255,0.72);
+            cursor: pointer;
+            transition: all 0.2s;
+            flex: 0 0 auto;
+        }
+        .accessory-card:hover { border-color: #8b5cf6; transform: translateY(-1px); }
+        .accessory-emoji { font-size: 30px; }
+        .accessory-name { font-size: 12px; color: #6b7280; margin-top: 6px; }
+        .tryon-tools {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            margin-top: 6px;
+            flex-wrap: wrap;
+        }
+        .tryon-tools button {
+            border: 1px solid #d1d5db;
+            background: white;
+            color: #374151;
+            border-radius: 999px;
+            padding: 6px 12px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .tryon-tools button:hover { border-color: #8b5cf6; color: #7c3aed; }
+
         /* Responsive */
         @media (max-width: 640px) {
             .header h1 { font-size: 24px; }
@@ -836,10 +901,30 @@
                     <div class="upload-hint">用于生成美甲效果图；仅生成 3D 配饰时可不上传</div>
                 </div>
                 <div id="previewWrapper" class="preview-container" style="display:none">
-                    <img id="previewImage" class="preview-image" src="" alt="preview">
+                    <div class="tryon-stage" id="tryonStage">
+                        <img id="previewImage" class="preview-image" src="" alt="preview">
+                        <div class="tryon-overlay" id="tryonOverlay"></div>
+                    </div>
                     <button class="remove-btn" id="removeBtn" title="移除图片">✕</button>
                 </div>
             </div>
+
+            <!-- Accessory Pool / Try-on Stickers -->
+            <div class="accessory-pool" id="accessoryPool" style="display:none">
+                <div class="accessory-pool-title">
+                    🧩 配件卡池
+                    <span>点一下放到甲面上；可拖拽移动，选中后用按钮缩放/旋转</span>
+                </div>
+                <div class="accessory-scroll" id="accessoryScroll"></div>
+                <div class="tryon-tools">
+                    <button id="tryonRotateLeft" type="button">↺ 旋转</button>
+                    <button id="tryonRotateRight" type="button">↻ 旋转</button>
+                    <button id="tryonScaleDown" type="button">－ 缩小</button>
+                    <button id="tryonScaleUp" type="button">＋ 放大</button>
+                    <button id="tryonRemove" type="button">🗑 删除选中</button>
+                    <button id="tryonClear" type="button">清空配件</button>
+                </div>
+                <p class="upload-hint" id="tryonHint">生成时会把贴纸位置自然化成真实 3D 配饰；描述里写“无名指加xx”会优先吸附到对应手指。</p>
 
             <!-- Reference Image Upload (optional) -->
             <input type="file" id="refFileInput" accept="image/jpeg,image/png,image/webp" style="display:none">
@@ -1185,6 +1270,7 @@
                         <span>下载彩色 3MF</span>
                     </button>
                     <button class="redraw-btn" id="newCropBtn">🔄 框选其他配饰</button>
+                    <button class="redraw-btn" id="tryonUse3dBtn" type="button">🖐️ 放到手上试戴</button>
                 </div>
             </div>
         </div>
@@ -1199,6 +1285,16 @@
         const previewWrapper = document.getElementById('previewWrapper');
         const previewImage = document.getElementById('previewImage');
         const fingerHint = document.getElementById('fingerHint');
+        const accessoryPool = document.getElementById('accessoryPool');
+        const accessoryScroll = document.getElementById('accessoryScroll');
+        const tryonStage = document.getElementById('tryonStage');
+        const tryonOverlay = document.getElementById('tryonOverlay');
+        const tryonRotateLeft = document.getElementById('tryonRotateLeft');
+        const tryonRotateRight = document.getElementById('tryonRotateRight');
+        const tryonScaleDown = document.getElementById('tryonScaleDown');
+        const tryonScaleUp = document.getElementById('tryonScaleUp');
+        const tryonRemove = document.getElementById('tryonRemove');
+        const tryonClear = document.getElementById('tryonClear');
         const removeBtn = document.getElementById('removeBtn');
         const styleInput = document.getElementById('styleInput');
         const generateBtn = document.getElementById('generateBtn');
@@ -1329,6 +1425,7 @@
         // --- Upload Logic ---
         uploadArea.addEventListener('click', (e) => {
             if (e.target === removeBtn || removeBtn.contains(e.target)) return;
+            if (e.target.closest('.tryon-sticker')) return;
             fileInput.click();
         });
 
@@ -1375,6 +1472,8 @@
                 uploadPlaceholder.style.display = 'none';
                 previewWrapper.style.display = 'inline-block';
                 uploadArea.classList.add('has-image');
+                accessoryPool.style.display = 'block';
+                renderAccessoryPool();
                 updateButtonState();
                 detectHandFromDataUrl(originalPreviewUrl);
             };
@@ -1391,6 +1490,8 @@
             uploadPlaceholder.style.display = 'block';
             previewWrapper.style.display = 'none';
             uploadArea.classList.remove('has-image');
+            accessoryPool.style.display = 'none';
+            clearStickers();
             setFingerHint('');
             updateButtonState();
         }
@@ -1514,6 +1615,179 @@
             return new Promise((resolve) => canvas.toBlob((blob) => resolve({ def, maskBlob: blob, roi }), 'image/png'));
         }
 
+        // --- Accessory pool / try-on stickers ---
+        const PRESET_ACCESSORIES = [
+            { emoji: '🌸', name: '粉花朵' },
+            { emoji: '🦋', name: '蝴蝶' },
+            { emoji: '🎀', name: '蝴蝶结' },
+            { emoji: '🐚', name: '贝壳' },
+            { emoji: '🦄', name: '独角兽' },
+            { emoji: '🌷', name: '郁金香' },
+            { emoji: '🫧', name: '泡泡' },
+            { emoji: '🍭', name: '棒棒糖' },
+            { emoji: '💎', name: '金钻' },
+            { emoji: '🌙', name: '月亮' },
+            { emoji: '🍒', name: '樱桃' },
+            { emoji: '🍓', name: '草莓' },
+            { emoji: '⭐', name: '星星' },
+            { emoji: '🍂', name: '落叶' },
+            { emoji: '🌈', name: '彩虹' },
+        ];
+        let stickers = [];
+        let activeStickerId = null;
+        let stickerSeq = 0;
+        let current3dLabel = 'AI生成配饰';
+        const tryonUse3dBtn = document.getElementById('tryonUse3dBtn');
+
+        function renderAccessoryPool() {
+            if (!accessoryScroll || accessoryScroll.dataset.rendered === '1') return;
+            accessoryScroll.dataset.rendered = '1';
+            PRESET_ACCESSORIES.forEach((acc) => {
+                const card = document.createElement('div');
+                card.className = 'accessory-card';
+                card.innerHTML = `<div class="accessory-emoji">${acc.emoji}</div><div class="accessory-name">${acc.name}</div>`;
+                card.addEventListener('click', () => addSticker({ label: acc.name, content: acc.emoji }));
+                accessoryScroll.appendChild(card);
+            });
+        }
+
+        function naturalToDisplayedPoint(x, y) {
+            const rect = previewImage.getBoundingClientRect();
+            if (!handImageSize || !rect.width || !rect.height) return { x: rect.width / 2, y: rect.height / 2 };
+            return { x: x * (rect.width / handImageSize.w), y: y * (rect.height / handImageSize.h) };
+        }
+
+        function updateStickerEl(st) {
+            st.el.style.left = `${st.x}px`;
+            st.el.style.top = `${st.y}px`;
+            st.el.style.transform = `translate(-50%, -50%) rotate(${st.rotation}deg) scale(${st.scale})`;
+            st.el.classList.toggle('selected', st.id === activeStickerId);
+        }
+
+        function selectSticker(id) {
+            activeStickerId = id;
+            stickers.forEach(updateStickerEl);
+        }
+
+        function addSticker({ label, content }) {
+            if (!selectedFile || !tryonOverlay) return;
+            const id = `st_${++stickerSeq}`;
+            let x;
+            let y;
+            const def = parseTargetFinger(styleInput.value);
+            if (def && handLandmarks && handImageSize) {
+                const roi = computeFingerRoi(def);
+                if (roi) {
+                    const p = naturalToDisplayedPoint(roi.x, roi.y);
+                    x = p.x;
+                    y = p.y;
+                }
+            }
+            if (x === undefined || y === undefined) {
+                const rect = previewImage.getBoundingClientRect();
+                x = rect.width / 2;
+                y = rect.height / 2;
+            }
+            const el = document.createElement('div');
+            el.className = 'tryon-sticker';
+            el.textContent = content;
+            el.title = label;
+            const st = { id, label, content, x, y, scale: 1, rotation: 0, el };
+            el.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+                selectSticker(id);
+                const startX = e.clientX;
+                const startY = e.clientY;
+                const origX = st.x;
+                const origY = st.y;
+                el.setPointerCapture(e.pointerId);
+                const move = (ev) => {
+                    st.x = origX + (ev.clientX - startX);
+                    st.y = origY + (ev.clientY - startY);
+                    updateStickerEl(st);
+                };
+                const up = () => {
+                    el.removeEventListener('pointermove', move);
+                    el.removeEventListener('pointerup', up);
+                    el.removeEventListener('pointercancel', up);
+                };
+                el.addEventListener('pointermove', move);
+                el.addEventListener('pointerup', up);
+                el.addEventListener('pointercancel', up);
+            });
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                selectSticker(id);
+            });
+            stickers.push(st);
+            tryonOverlay.appendChild(el);
+            selectSticker(id);
+            updateButtonState();
+        }
+
+        function clearStickers() {
+            stickers.forEach((st) => st.el.remove());
+            stickers = [];
+            activeStickerId = null;
+            updateButtonState();
+        }
+
+        function removeActiveSticker() {
+            if (!activeStickerId) return;
+            const idx = stickers.findIndex((st) => st.id === activeStickerId);
+            if (idx >= 0) {
+                stickers[idx].el.remove();
+                stickers.splice(idx, 1);
+            }
+            activeStickerId = null;
+            updateButtonState();
+        }
+
+        function activeSticker() {
+            return stickers.find((st) => st.id === activeStickerId) || null;
+        }
+
+        tryonRotateLeft.addEventListener('click', () => { const st = activeSticker(); if (st) { st.rotation -= 15; updateStickerEl(st); } });
+        tryonRotateRight.addEventListener('click', () => { const st = activeSticker(); if (st) { st.rotation += 15; updateStickerEl(st); } });
+        tryonScaleDown.addEventListener('click', () => { const st = activeSticker(); if (st) { st.scale = Math.max(0.3, st.scale / 1.12); updateStickerEl(st); } });
+        tryonScaleUp.addEventListener('click', () => { const st = activeSticker(); if (st) { st.scale = Math.min(4, st.scale * 1.12); updateStickerEl(st); } });
+        tryonRemove.addEventListener('click', removeActiveSticker);
+        tryonClear.addEventListener('click', clearStickers);
+        if (tryonUse3dBtn) {
+            tryonUse3dBtn.addEventListener('click', () => {
+                addSticker({ label: current3dLabel || 'AI生成配饰', content: '🧊' });
+                uploadArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            });
+        }
+
+        async function buildTryonCompositeBlob() {
+            if (!stickers.length || !originalPreviewUrl) return null;
+            const img = new Image();
+            const loaded = new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
+            img.src = originalPreviewUrl;
+            await loaded;
+            const width = (handImageSize && handImageSize.w) || img.naturalWidth;
+            const height = (handImageSize && handImageSize.h) || img.naturalHeight;
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            const rect = previewImage.getBoundingClientRect();
+            const factor = rect.width ? width / rect.width : 1;
+            stickers.forEach((st) => {
+                ctx.save();
+                ctx.translate(st.x * factor, st.y * factor);
+                ctx.rotate((st.rotation * Math.PI) / 180);
+                ctx.font = `${Math.max(10, Math.round(44 * st.scale * factor))}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(st.content, 0, 0);
+                ctx.restore();
+            });
+            return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+        }
+
         // --- Style presets ---
         document.querySelectorAll('.preset-tag').forEach(tag => {
             tag.addEventListener('click', () => {
@@ -1529,7 +1803,7 @@
 
         function updateButtonState() {
             const hasText = styleInput.value.trim().length > 0;
-            const hasInput = hasText || refFile;
+            const hasInput = hasText || refFile || stickers.length > 0;
             // 有手部图：美甲试穿；仅参考图：图生3D；只有文字：文生3D。
             generateBtn.disabled = !(hasInput && (selectedFile || refFile || hasText));
             optimizeBtn.disabled = !hasInput;
@@ -1552,7 +1826,7 @@
 
         async function generate() {
             const description = styleInput.value.trim();
-            if (!(description || refFile)) return;
+            if (!(description || refFile || stickers.length > 0)) return;
 
             // 没有手部图时不再进入美甲效果图流程：参考图直接图生3D，纯文字直接文生3D。
             if (!selectedFile) {
@@ -1573,14 +1847,29 @@
             loadingCard.style.display = 'block';
             generateBtn.disabled = true;
 
+            let imageToSend = selectedFile;
+            let finalDescription = description;
+            if (stickers.length > 0) {
+                try {
+                    const compositeBlob = await buildTryonCompositeBlob();
+                    if (compositeBlob) {
+                        imageToSend = new File([compositeBlob], 'tryon-composite.jpg', { type: 'image/jpeg' });
+                    }
+                } catch (e) {
+                    console.warn('buildTryonCompositeBlob failed', e);
+                }
+                const names = stickers.map((st) => st.label).join('、');
+                finalDescription = (description ? description + '。' : '') + `图片中已用贴纸标出配饰位置：请把贴纸替换为真实立体的${names}，使其贴合对应指甲/手指，透视、光影和遮挡自然；手部姿势、皮肤质感和未标记区域保持不变。`;
+            }
+
             const formData = new FormData();
-            formData.append('image', selectedFile);
-            if (description) formData.append('style', description);
+            formData.append('image', imageToSend);
+            if (finalDescription) formData.append('style', finalDescription);
             if (refFile) formData.append('reference', refFile);
 
             let targetInfo = { def: null, maskBlob: null };
             try {
-                targetInfo = await buildTargetMask(description);
+                targetInfo = await buildTargetMask(finalDescription);
             } catch (e) {
                 console.warn('buildTargetMask failed', e);
             }
