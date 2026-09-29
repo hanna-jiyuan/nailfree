@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NailFree - AI 美甲试穿</title>
     <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
@@ -869,6 +871,7 @@
                 <textarea class="style-input" id="styleInput" rows="4" placeholder="描述你想要的美甲风格，如：法式猫眼美甲、冰透仙女风、复古油画风、极简法式白边...&#10;上传参考图后，描述可以只写修改细节，如：底色换成雾霾蓝，去掉钻饰"></textarea>
                 <div class="optimize-result-hint" id="optimizeResultHint" style="display:none">💡 已优化为专业描述，可继续手动编辑，或直接生成</div>
                 <p class="upload-hint" style="margin-top:10px">没有图片时，直接根据文字生成 3D 配饰；上传参考图时，直接根据参考图生成 3D；上传手部图时，生成美甲效果图后可框选配饰。</p>
+                <div id="fingerHint" style="display:none; margin-top:8px; font-size:12px; color:#7c3aed; line-height:1.5;"></div>
                 <div class="style-presets">
                     <span class="preset-tag" data-style="法式白色猫眼美甲，优雅知性，光泽细腻">法式猫眼 ✨</span>
                     <span class="preset-tag" data-style="冰透粉色仙女风美甲，透明感强，镶嵌小珍珠和水钻">冰透仙女风 🧚</span>
@@ -1195,6 +1198,7 @@
         const uploadPlaceholder = document.getElementById('uploadPlaceholder');
         const previewWrapper = document.getElementById('previewWrapper');
         const previewImage = document.getElementById('previewImage');
+        const fingerHint = document.getElementById('fingerHint');
         const removeBtn = document.getElementById('removeBtn');
         const styleInput = document.getElementById('styleInput');
         const generateBtn = document.getElementById('generateBtn');
@@ -1372,6 +1376,7 @@
                 previewWrapper.style.display = 'inline-block';
                 uploadArea.classList.add('has-image');
                 updateButtonState();
+                detectHandFromDataUrl(originalPreviewUrl);
             };
             reader.readAsDataURL(file);
         }
@@ -1379,12 +1384,134 @@
         function clearFile() {
             selectedFile = null;
             originalPreviewUrl = null;
+            handLandmarks = null;
+            handImageSize = null;
             fileInput.value = '';
             previewImage.src = '';
             uploadPlaceholder.style.display = 'block';
             previewWrapper.style.display = 'none';
             uploadArea.classList.remove('has-image');
+            setFingerHint('');
             updateButtonState();
+        }
+
+        // --- Finger landmark detection (MediaPipe Hands in browser) ---
+        const FINGER_DEFS = [
+            { id: 'thumb', cn: '大拇指', keys: ['大拇指', '拇指', 'thumb'], tip: 4, pip: 2, mcp: 1 },
+            { id: 'index', cn: '食指', keys: ['食指', 'index'], tip: 8, pip: 6, mcp: 5 },
+            { id: 'middle', cn: '中指', keys: ['中指', 'middle'], tip: 12, pip: 10, mcp: 9 },
+            { id: 'ring', cn: '无名指', keys: ['无名指', 'ring'], tip: 16, pip: 14, mcp: 13 },
+            { id: 'pinky', cn: '小指', keys: ['小拇指', '小指', 'pinky'], tip: 20, pip: 18, mcp: 17 },
+        ];
+        let handLandmarks = null;
+        let handImageSize = null;
+
+        function setFingerHint(text) {
+            if (!fingerHint) return;
+            if (!text) {
+                fingerHint.style.display = 'none';
+                fingerHint.textContent = '';
+                return;
+            }
+            fingerHint.textContent = text;
+            fingerHint.style.display = 'block';
+        }
+
+        function _lmDist(a, b) {
+            return Math.hypot(a.x - b.x, a.y - b.y);
+        }
+
+        function fingerStatesFromLandmarks(lm) {
+            const wrist = lm[0];
+            const states = {};
+            FINGER_DEFS.forEach((def) => {
+                const tip = lm[def.tip];
+                const pip = lm[def.pip];
+                const mcp = lm[def.mcp];
+                const dip = lm[def.pip + 1] || pip;
+                let extended = false;
+                if (def.id === 'thumb') {
+                    extended = _lmDist(tip, wrist) > _lmDist(pip, wrist) * 1.03 && _lmDist(tip, mcp) > _lmDist(pip, mcp) * 0.95;
+                } else {
+                    extended = _lmDist(tip, wrist) > _lmDist(pip, wrist) * 1.06 && _lmDist(tip, pip) > _lmDist(dip, pip) * 0.90;
+                }
+                states[def.id] = extended;
+            });
+            return states;
+        }
+
+        async function detectHandFromDataUrl(dataUrl) {
+            handLandmarks = null;
+            handImageSize = null;
+            if (!dataUrl) { setFingerHint(''); return; }
+            if (typeof Hands === 'undefined') { setFingerHint(''); return; }
+            setFingerHint('🖐️ 正在识别手指关键点...');
+            try {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                const loaded = new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
+                img.src = dataUrl;
+                await loaded;
+                const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+                hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+                const results = await hands.send({ image: img });
+                if (hands.close) await hands.close();
+                const lm = results.multiHandLandmarks && results.multiHandLandmarks[0];
+                if (!lm) {
+                    setFingerHint('🖐️ 未识别到完整手掌；仍会按整只手生成。若要“无名指加xx”，建议上传五指张开的手部图。');
+                    return;
+                }
+                handLandmarks = lm;
+                handImageSize = { w: img.naturalWidth, h: img.naturalHeight };
+                const states = fingerStatesFromLandmarks(lm);
+                const open = FINGER_DEFS.filter((f) => states[f.id]).map((f) => f.cn).join('、') || '未检测到展开手指';
+                setFingerHint(`🖐️ 已识别手指关键点（展开：${open}）。描述里写“无名指加蝴蝶结”这类，会尽量只改那根手指。`);
+            } catch (e) {
+                console.warn('hand detect failed', e);
+                setFingerHint('');
+            }
+        }
+
+        function parseTargetFinger(text) {
+            const t = (text || '').toLowerCase();
+            if (!t) return null;
+            for (const def of FINGER_DEFS) {
+                if (def.keys.some((k) => t.includes(k.toLowerCase()))) return def;
+            }
+            return null;
+        }
+
+        function computeFingerRoi(def) {
+            if (!handLandmarks || !handImageSize) return null;
+            const tip = handLandmarks[def.tip];
+            const pip = handLandmarks[def.pip];
+            if (!tip || !pip) return null;
+            const w = handImageSize.w;
+            const h = handImageSize.h;
+            const cx = (tip.x + (pip.x - tip.x) * 0.35) * w;
+            const cy = (tip.y + (pip.y - tip.y) * 0.35) * h;
+            const seg = Math.hypot((tip.x - pip.x) * w, (tip.y - pip.y) * h);
+            const r = Math.max(18, seg * (def.id === 'thumb' ? 1.15 : 0.95));
+            return { x: Math.min(Math.max(cx, 0), w), y: Math.min(Math.max(cy, 0), h), r };
+        }
+
+        function buildTargetMask(description) {
+            const def = parseTargetFinger(description);
+            if (!def) return Promise.resolve({ def: null, maskBlob: null, roi: null });
+            if (!handLandmarks || !handImageSize) return Promise.resolve({ def, maskBlob: null, roi: null });
+            const roi = computeFingerRoi(def);
+            if (!roi) return Promise.resolve({ def, maskBlob: null, roi: null });
+            const canvas = document.createElement('canvas');
+            canvas.width = handImageSize.w;
+            canvas.height = handImageSize.h;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.beginPath();
+            ctx.arc(roi.x, roi.y, roi.r, 0, Math.PI * 2);
+            ctx.fill();
+            return new Promise((resolve) => canvas.toBlob((blob) => resolve({ def, maskBlob: blob, roi }), 'image/png'));
         }
 
         // --- Style presets ---
@@ -1450,6 +1577,22 @@
             formData.append('image', selectedFile);
             if (description) formData.append('style', description);
             if (refFile) formData.append('reference', refFile);
+
+            let targetInfo = { def: null, maskBlob: null };
+            try {
+                targetInfo = await buildTargetMask(description);
+            } catch (e) {
+                console.warn('buildTargetMask failed', e);
+            }
+            if (targetInfo.def) {
+                formData.append('target_finger', targetInfo.def.id);
+                if (targetInfo.maskBlob) {
+                    formData.append('mask', targetInfo.maskBlob, 'finger-mask.png');
+                    setFingerHint(`🎯 已定位${targetInfo.def.cn}，本次将只修改这根手指的指甲/配饰。`);
+                } else {
+                    setFingerHint(`🎯 描述命中${targetInfo.def.cn}，但未识别到完整手掌关键点；将用文本约束尽量只改这根手指。`);
+                }
+            }
 
             try {
                 const resp = await fetch('/api/generate', {

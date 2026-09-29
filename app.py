@@ -461,6 +461,8 @@ async def generate_nail(
     image: UploadFile = File(...),
     style: Optional[str] = Form(None),
     reference: Optional[UploadFile] = File(None),
+    mask: Optional[UploadFile] = File(None),
+    target_finger: Optional[str] = Form(None),
     decrypted_userinfo: Optional[str] = Header(None, alias="Decrypted-Userinfo"),
 ):
     """调用 gpt-image-2 生成美甲效果图（支持可选参考图）"""
@@ -480,34 +482,65 @@ async def generate_nail(
     if not style_text and ref_bytes is None:
         raise HTTPException(400, "请填写风格描述或上传参考图")
 
+    # 读取手指 mask（可选）：mask 透明区域表示只允许编辑的目标手指/指甲区域
+    mask_bytes = None
+    if mask is not None and mask.filename:
+        mask_bytes = await mask.read()
+        if len(mask_bytes) > 5 * 1024 * 1024:
+            raise HTTPException(400, "手指 mask 大小不能超过 5MB")
+        if (mask.content_type or "") not in ("image/png", "image/webp"):
+            raise HTTPException(400, "手指 mask 仅支持 PNG/WebP")
+
+    finger_cn_map = {
+        "thumb": "大拇指", "index": "食指", "middle": "中指", "ring": "无名指", "pinky": "小指",
+        "大拇指": "大拇指", "拇指": "大拇指", "食指": "食指", "中指": "中指", "无名指": "无名指",
+        "小指": "小指", "小拇指": "小指",
+    }
+    target_finger_text = (target_finger or "").strip().lower()
+    finger_cn = finger_cn_map.get(target_finger_text, "")
+    finger_instruction = ""
+    if finger_cn:
+        finger_instruction = (
+            f"用户指定只修改{finger_cn}：请只在{finger_cn}的指甲/指尖区域应用美甲设计或添加配饰；"
+            "其他手指、手部姿势、皮肤质感和背景必须保持完全不变。"
+            + ("如果请求中包含 mask，请严格只在 mask 透明区域内编辑。" if mask_bytes else "")
+        )
+
     # 构造 prompt + 输入图片：有参考图时走多图编辑模式
     if ref_bytes is not None:
         prompt = (
             "第一张图是用户的手部照片，第二张图是美甲设计参考图。"
-            "请将参考图中的美甲设计精准应用到第一张图所有指甲上："
-            "保持手部姿势、手指形态、皮肤质感与背景完全不变，只改变指甲表面的美甲图案。"
+            "请将参考图中的美甲设计精准应用到第一张图指定手指的指甲上："
+            "保持手部姿势、手指形态、皮肤质感与背景完全不变，只改变目标指甲表面的美甲图案。"
             + (f"设计要求：{style_text}。" if style_text else "")
+            + finger_instruction
             + "效果自然逼真，美甲图案清晰精致。"
         )
-        files = [
+        files_base = [
             ("image[]", ("hand.jpg", image_bytes, mime)),
             ("image[]", ("reference.jpg", ref_bytes, ref_mime)),
         ]
+        files = list(files_base)
+        if mask_bytes:
+            files.append(("mask", ("finger-mask.png", mask_bytes, "image/png")))
     else:
         prompt = (
             f"在这张手部照片上生成美甲效果。美甲风格要求：{style_text}。"
-            "请保持手部姿势不变，只在指甲上应用描述的美甲设计，效果要自然逼真。"
+            + finger_instruction
+            + "请保持手部姿势不变，只在目标指甲上应用描述的美甲设计，效果要自然逼真。"
         )
-        files = {"image": ("hand.jpg", image_bytes, mime)}
+        files_base = {"image": ("hand.jpg", image_bytes, mime)}
+        files = dict(files_base)
+        if mask_bytes:
+            files["mask"] = ("finger-mask.png", mask_bytes, "image/png")
 
     # 调用 gpt-image-2 图片编辑 API
     api_key = _load_rai_api_key()
     api_url = "https://maas.devops.rednote.life/openai/images/edits"
 
-    # /images/edits 用 multipart/form-data 上传
-    async with httpx.AsyncClient(timeout=180.0) as client:
-        try:
-            resp = await client.post(
+    async def _post_edit(files_payload):
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            return await client.post(
                 api_url,
                 headers={"api-key": api_key},
                 data={
@@ -517,8 +550,19 @@ async def generate_nail(
                     "size": "1024x1024",
                     "quality": "medium",
                 },
-                files=files,
+                files=files_payload,
             )
+
+    try:
+        resp = await _post_edit(files)
+    except httpx.RequestError as e:
+        raise HTTPException(502, f"调用 AI 服务失败：{e}")
+
+    # 如果网关不支持 mask 参数，去掉 mask 重试一次，保留 target_finger 文本约束。
+    if resp.status_code != 200 and mask_bytes is not None:
+        logger.warning("generate: edits with finger mask failed (%s), retry without mask", resp.status_code)
+        try:
+            resp = await _post_edit(files_base)
         except httpx.RequestError as e:
             raise HTTPException(502, f"调用 AI 服务失败：{e}")
 
